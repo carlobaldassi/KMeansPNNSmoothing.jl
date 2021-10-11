@@ -1,0 +1,10 @@
+name = "KMeansNNPP"
+uuid = "557a99b1-8e5d-4db2-a9c8-ad30d6f7bacb"
+authors = ["Carlo Baldassi <carlobaldassi@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+ExtractMacro = "f86d3d12-fd5b-522c-99e9-61577282a1e9"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
