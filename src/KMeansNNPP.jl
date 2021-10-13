@@ -480,6 +480,55 @@ function init_centroid_nn(data::Matrix{Float64}, k::Int)
     return config
 end
 
+function init_centroid_refine(data::Matrix{Float64}, k::Int; J = 10, ncandidates = nothing, init = "++")
+    DataLogging.@push_prefix! "INIT_REFINE"
+    m, n = size(data)
+    @assert J * k ≤ n
+    if init == "++"
+        init_func = (data,k)->init_centroid_pp(data, k; ncandidates)
+    elseif init == "unif"
+        init_func = init_centroid_unif
+    else
+        error()
+    end
+    DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
+    t = @elapsed mconfig = begin
+        tinit = @elapsed configs = begin
+            split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
+            @assert all(sum(split .== a) ≥ k for a = 1:J)
+            configs = Vector{Configuration}(undef, J)
+            for a = 1:J
+                rdata = data[:,split .== a]
+                DataLogging.@push_prefix! "SPLIT=$a"
+                config = init_func(rdata, k)
+                lloyd!(config, rdata, 1_000, 1e-4, false)
+                DataLogging.@pop_prefix!
+                configs[a] = config
+            end
+            configs
+        end
+        DataLogging.@log "INITDONE time: $tinit"
+        pool = hcat((configs[a].centroids for a in 1:J)...)
+        tref = @elapsed begin
+            pconfigs = Vector{Configuration}(undef, J)
+            for a = 1:J
+                config = Configuration(pool, configs[a].centroids)
+                DataLogging.@push_prefix! "SPLIT=$a"
+                lloyd!(config, pool, 1_000, 1e-4, false)
+                DataLogging.@pop_prefix!
+                configs[a] = config
+            end
+            configs
+        end
+        DataLogging.@log "REFINEDONE time: $tref"
+        a_best = argmin([configs[a].cost for a in 1:J])
+        Configuration(data, configs[a_best].centroids)
+    end
+    DataLogging.@log "DONE time: $t cost: $(mconfig.cost)"
+    DataLogging.@pop_prefix!
+    return mconfig
+end
+
 function lloyd!(config::Configuration, data::Matrix{Float64}, max_it::Int, tol::Float64, verbose::Bool)
     DataLogging.@push_prefix! "LLOYD"
     DataLogging.@log "INPUTS max_it: $max_it tol: $tol"
@@ -524,9 +573,10 @@ function kmeans(
         ncandidates::Union{Nothing,Int} = nothing,
         ρ::Float64 = 0.5,
         logfile::AbstractString = "",
+        J::Int = 10,
     )
-    if init isa String && init ∉ ["++", "unif", "++nn", "nn"]
-        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\""))
+    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++"]
+        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\""))
     end
 
     logger = if !isempty(logfile)
@@ -553,6 +603,10 @@ function kmeans(
             config = init_centroid_ppnn(data, k; ncandidates, ρ)
         elseif init == "nn"
             config = init_centroid_nn(data, k)
+        elseif init == "refine"
+            config = init_centroid_refine(data, k; J, ncandidates, init = "unif")
+        elseif init == "refine++"
+            config = init_centroid_refine(data, k; J, ncandidates, init = "++")
         end
     else
         centroids = init
