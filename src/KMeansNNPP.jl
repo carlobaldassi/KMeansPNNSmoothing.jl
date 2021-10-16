@@ -461,6 +461,88 @@ function init_centroid_ppnn(data::Matrix{Float64}, k::Int; ncandidates = nothing
     return mconfig
 end
 
+function init_centroid_hnn(data::Matrix{Float64}, k::Int)
+    DataLogging.@push_prefix! "INIT_HNN"
+    m, n = size(data)
+    J = max(n ÷ 2k, 1)
+    DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
+
+    t = @elapsed mconfig = begin
+        split_inds = [Int[] for a = 1:J]
+        split_data = Vector{Matrix{Float64}}(undef, J)
+        t0 = @elapsed configs = begin
+            ls = diff([round(Int,x) for x in range(1, n+1, length=J+1)])
+            split = shuffle!(vcat((repeat([i], ls[i]) for i in 1:J)...))
+            @assert length(split) == n
+            for i = 1:n
+                a = split[i]
+                push!(split_inds[a], i)
+            end
+            @assert all(length(split_inds[a]) ≥ 2k for a = 1:J)
+            for a = 1:J
+                split_data[a] = data[:,split_inds[a]]
+            end
+            configs = Vector{Configuration}(undef, J)
+            for a = 1:J
+                rdata = split_data[a]
+                DataLogging.@push_prefix! "SPLIT=$a"
+                config = init_centroid_nn(rdata, k)
+                lloyd!(config, rdata, 1_000, 1e-4, false)
+                DataLogging.@pop_prefix!
+                configs[a] = config
+            end
+            configs
+        end
+        # println(collect(config.cost for config in configs))
+        DataLogging.@log "STEP0DONE time: $t0"
+
+        tm = @elapsed fconfig = begin
+            while J > 1
+                # @assert sum(size(sd,2) for sd in split_data) == n
+                J_new = J ÷ 2 + isodd(J)
+                split_data_new = Vector{Matrix{Float64}}(undef, J_new)
+                configs_new = Vector{Configuration}(undef, J_new)
+                for b in 1:(J÷2)
+                    a1, a2 = 2b-1, 2b
+                    centroids_new = hcat(configs[a1].centroids, configs[a2].centroids)
+                    n1, n2 = size(split_data[a1], 2), size(split_data[a2], 2)
+                    nc = n1 + n2
+                    c_new = zeros(Int, nc)
+                    costs_new = zeros(nc)
+                    for i = 1:n1
+                        c_new[i] = configs[a1].c[i]
+                        costs_new[i] = configs[a1].costs[i]
+                    end
+                    for i = 1:n2
+                        c_new[n1+i] = configs[a2].c[i] + k
+                        costs_new[n1+i] = configs[a2].costs[i]
+                    end
+                    rdata_new = hcat(split_data[a1], split_data[a2])
+                    mconfig = Configuration(m, 2k, nc, c_new, costs_new, centroids_new)
+                    pairwise_nn!(mconfig, k)
+                    partition_from_centroids!(mconfig, rdata_new)
+                    J_new > 1 && lloyd!(mconfig, rdata_new, 1_000, 1e-4, false)
+                    split_data_new[b+isodd(J)] = rdata_new
+                    configs_new[b+isodd(J)] = mconfig
+                end
+                if isodd(J)
+                    split_data_new[1] = split_data[J]
+                    configs_new[1] = configs[J]
+                end
+                J, split_data, configs = J_new, split_data_new, configs_new
+                # println(collect(config.cost for config in configs))
+            end
+            # lloyd!(configs[1], split_data[1], 1_000, 0.0, true)
+            fconfig = Configuration(data, configs[1].centroids)
+        end
+        DataLogging.@log "NNMRGDONE time: $tm"
+        fconfig
+    end
+    DataLogging.@log "DONE time: $t cost: $(mconfig.cost)"
+    DataLogging.@pop_prefix!
+    return mconfig
+end
+
 function init_centroid_nn(data::Matrix{Float64}, k::Int)
     DataLogging.@push_prefix! "INIT_NN"
     m, n = size(data)
@@ -575,8 +657,8 @@ function kmeans(
         logfile::AbstractString = "",
         J::Int = 10,
     )
-    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++"]
-        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\""))
+    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn"]
+        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\", \"hnn\""))
     end
 
     logger = if !isempty(logfile)
@@ -607,6 +689,8 @@ function kmeans(
             config = init_centroid_refine(data, k; J, ncandidates, init = "unif")
         elseif init == "refine++"
             config = init_centroid_refine(data, k; J, ncandidates, init = "++")
+        elseif init == "hnn"
+            config = init_centroid_hnn(data, k)
         end
     else
         centroids = init
