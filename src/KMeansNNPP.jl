@@ -285,6 +285,46 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing)
     return config
 end
 
+function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
+    DataLogging.@push_prefix! "INIT_MAXMIN"
+    m, n = size(data)
+    @assert n ≥ k
+
+    DataLogging.@log "INPUTS m: $m n: $n k: $k"
+
+    t = @elapsed config = begin
+        centr = zeros(m, k)
+        y = rand(1:n)
+        datay = data[:,y]
+        centr[:,1] = datay
+
+        costs = compute_costs_one(data, datay)
+
+        cost = sum(costs)
+        c = ones(Int, n)
+
+        for j = 2:k
+            y = argmax(costs)
+            datay = data[:,y]
+            @inbounds for i = 1:n
+                old_v = costs[i]
+                new_v = _cost(@view(data[:,i]), datay)
+                if new_v < old_v
+                    costs[i] = new_v
+                    c[i] = j
+                    cost += new_v - old_v
+                end
+            end
+            centr[:,j] .= datay
+        end
+        # returning config
+        Configuration(m, k, n, c, costs, centr)
+    end
+    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@pop_prefix!
+    return config
+end
+
 function pairwise_nn!(config::Configuration, tgt_k::Int)
     @extract config : m k n c costs centroids csizes
     DataLogging.@push_prefix! "PNN"
@@ -657,8 +697,8 @@ function kmeans(
         logfile::AbstractString = "",
         J::Int = 10,
     )
-    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn"]
-        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\", \"hnn\""))
+    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin"]
+        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\", \"hnn\", \"maxmin\""))
     end
 
     logger = if !isempty(logfile)
@@ -691,6 +731,8 @@ function kmeans(
             config = init_centroid_refine(data, k; J, ncandidates, init = "++")
         elseif init == "hnn"
             config = init_centroid_hnn(data, k)
+        elseif init == "maxmin"
+            config = init_centroid_maxmin(data, k)
         end
     else
         centroids = init
