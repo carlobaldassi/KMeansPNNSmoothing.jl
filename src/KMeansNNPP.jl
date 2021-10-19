@@ -501,6 +501,64 @@ function init_centroid_ppnn(data::Matrix{Float64}, k::Int; ncandidates = nothing
     return mconfig
 end
 
+function metainit(data::Matrix{Float64}, k::Int)
+    m, n = size(data)
+    if n ≤ 2k
+        return init_centroid_nn(data, k)
+    else
+        return init_centroid_metann(data, k; init = metainit)
+    end
+end
+
+function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_pp, ρ = 0.5)
+    DataLogging.@push_prefix! "INIT_METANN"
+    m, n = size(data)
+    J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
+    @assert J * k ≤ n
+    # (J == 1 || J == n ÷ k) && @warn "edge case: J = $J"
+    DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
+
+    t = @elapsed mconfig = begin
+        tpp = @elapsed configs = begin
+            split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
+            @assert all(sum(split .== a) ≥ k for a = 1:J)
+            configs = Vector{Configuration}(undef, J)
+            for a = 1:J
+                rdata = data[:,split .== a]
+                DataLogging.@push_prefix! "SPLIT=$a"
+                config = init(rdata, k)
+                lloyd!(config, rdata, 1_000, 1e-4, false)
+                DataLogging.@pop_prefix!
+                configs[a] = config
+            end
+            configs
+        end
+        DataLogging.@log "PPDONE time: $tpp"
+
+        tnn = @elapsed mconfig = begin
+            centroids_new = hcat((config.centroids for config in configs)...)
+            c_new = zeros(Int, n)
+            costs_new = zeros(n)
+            inds = zeros(Int, J)
+            for i = 1:n
+                a = split[i]
+                inds[a] += 1
+                c_new[i] = configs[a].c[inds[a]] + k * (a-1)
+                costs_new[i] = configs[a].costs[inds[a]]
+            end
+            mconfig = Configuration(m, k * J, n, c_new, costs_new, centroids_new)
+            pairwise_nn!(mconfig, k)
+            partition_from_centroids!(mconfig, data)
+            mconfig
+        end
+        DataLogging.@log "NNDONE time: $tnn"
+        mconfig
+    end
+    DataLogging.@log "DONE time: $t cost: $(mconfig.cost)"
+    DataLogging.@pop_prefix!
+    return mconfig
+end
+
 function init_centroid_hnn(data::Matrix{Float64}, k::Int)
     DataLogging.@push_prefix! "INIT_HNN"
     m, n = size(data)
@@ -697,8 +755,9 @@ function kmeans(
         logfile::AbstractString = "",
         J::Int = 10,
     )
-    if init isa String && init ∉ ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin"]
-        throw(ArgumentError("init should either be a matrix or one of the strings \"++\", \"unif\", \"++nn\", \"nn\", \"refine\", \"refine++\", \"hnn\", \"maxmin\""))
+    allmethods = ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin", "hnn2", "maxminnn", "maxminnnnn", "maxmi7n"]
+    if init isa String && init ∉ allmethods
+        throw(ArgumentError("init should either be a matrix or one of: $allmethods"))
     end
 
     logger = if !isempty(logfile)
@@ -722,7 +781,8 @@ function kmeans(
         elseif init == "unif"
             config = init_centroid_unif(data, k)
         elseif init == "++nn"
-            config = init_centroid_ppnn(data, k; ncandidates, ρ)
+            # config = init_centroid_ppnn(data, k; ncandidates, ρ)
+            config = init_centroid_metann(data, k; init = (x...)->init_centroid_pp(x...; ncandidates), ρ)
         elseif init == "nn"
             config = init_centroid_nn(data, k)
         elseif init == "refine"
@@ -733,6 +793,20 @@ function kmeans(
             config = init_centroid_hnn(data, k)
         elseif init == "maxmin"
             config = init_centroid_maxmin(data, k)
+        elseif init == "hnn2"
+            config = init_centroid_metann(data, k; init = metainit)
+        elseif init == "maxminnn"
+            config = init_centroid_metann(data, k; init = init_centroid_maxmin, ρ)
+        elseif init == "maxminnnnn"
+            config = init_centroid_metann(data, k; init = (x...)->init_centroid_metann(x...; init=init_centroid_maxmin, ρ), ρ)
+        elseif init == "maxmi7n"
+            config = init_centroid_metann(data, k;
+                    init = (x...)->init_centroid_metann(x...;
+                        init = (x...)->init_centroid_metann(x...;
+                            init = init_centroid_maxmin,
+                            ρ),
+                        ρ),
+                    ρ)
         end
     else
         centroids = init
