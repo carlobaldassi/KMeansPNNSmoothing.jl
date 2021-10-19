@@ -660,17 +660,17 @@ function init_centroid_nn(data::Matrix{Float64}, k::Int)
     return config
 end
 
-function init_centroid_refine(data::Matrix{Float64}, k::Int; J = 10, ncandidates = nothing, init = "++")
+function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroid_pp, J = 10)
     DataLogging.@push_prefix! "INIT_REFINE"
     m, n = size(data)
     @assert J * k ≤ n
-    if init == "++"
-        init_func = (data,k)->init_centroid_pp(data, k; ncandidates)
-    elseif init == "unif"
-        init_func = init_centroid_unif
-    else
-        error()
-    end
+    # if init == "++"
+    #     init_func = (data,k)->init_centroid_pp(data, k; ncandidates)
+    # elseif init == "unif"
+    #     init_func = init_centroid_unif
+    # else
+    #     error()
+    # end
     DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
     t = @elapsed mconfig = begin
         tinit = @elapsed configs = begin
@@ -680,7 +680,7 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; J = 10, ncandidates
             for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
-                config = init_func(rdata, k)
+                config = init(rdata, k)
                 lloyd!(config, rdata, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
@@ -754,10 +754,21 @@ function kmeans(
         ρ::Float64 = 0.5,
         logfile::AbstractString = "",
         J::Int = 10,
+        rlevel::Int = 0,
+        init0::String = "",
     )
-    allmethods = ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin", "hnn2", "maxminnn", "maxminnnnn", "maxmi7n"]
-    if init isa String && init ∉ allmethods
-        throw(ArgumentError("init should either be a matrix or one of: $allmethods"))
+    # allmethods = ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin", "hnn2", "maxminnn", "maxminnnnn", "maxmi7n"]
+    all_basic_methods = ["++", "unif", "nn", "maxmin", "hnn"]
+    all_rec_methods = ["refine", "smoothnn"]
+    all_methods = [all_basic_methods; all_rec_methods]
+    if init isa String
+        init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
+        if init ∈ all_rec_methods
+            init0 ∈ all_basic_methods || throw(ArgumentError("when init=$init, init0 should be one of: $all_basic_methods"))
+            rlevel ≤ 0 && (rlevel = 1)
+        else
+            init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
+        end
     end
 
     logger = if !isempty(logfile)
@@ -776,37 +787,50 @@ function kmeans(
     DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
 
     if init isa String
-        if init == "++"
-            config = init_centroid_pp(data, k; ncandidates)
-        elseif init == "unif"
-            config = init_centroid_unif(data, k)
-        elseif init == "++nn"
-            # config = init_centroid_ppnn(data, k; ncandidates, ρ)
-            config = init_centroid_metann(data, k; init = (x...)->init_centroid_pp(x...; ncandidates), ρ)
-        elseif init == "nn"
-            config = init_centroid_nn(data, k)
-        elseif init == "refine"
-            config = init_centroid_refine(data, k; J, ncandidates, init = "unif")
-        elseif init == "refine++"
-            config = init_centroid_refine(data, k; J, ncandidates, init = "++")
-        elseif init == "hnn"
-            config = init_centroid_hnn(data, k)
-        elseif init == "maxmin"
-            config = init_centroid_maxmin(data, k)
-        elseif init == "hnn2"
-            config = init_centroid_metann(data, k; init = metainit)
-        elseif init == "maxminnn"
-            config = init_centroid_metann(data, k; init = init_centroid_maxmin, ρ)
-        elseif init == "maxminnnnn"
-            config = init_centroid_metann(data, k; init = (x...)->init_centroid_metann(x...; init=init_centroid_maxmin, ρ), ρ)
-        elseif init == "maxmi7n"
-            config = init_centroid_metann(data, k;
-                    init = (x...)->init_centroid_metann(x...;
-                        init = (x...)->init_centroid_metann(x...;
-                            init = init_centroid_maxmin,
-                            ρ),
-                        ρ),
-                    ρ)
+        if init ∈ all_basic_methods
+            if init == "++"
+                config = init_centroid_pp(data, k; ncandidates)
+            elseif init == "unif"
+                config = init_centroid_unif(data, k)
+            elseif init == "nn"
+                config = init_centroid_nn(data, k)
+            elseif init == "maxmin"
+                config = init_centroid_maxmin(data, k)
+            elseif init == "hnn"
+                config = init_centroid_hnn(data, k)
+            else
+                error("wat")
+            end
+        else # init ∈ all_rec_methods
+            @assert rlevel ≥ 1
+            local metainit::Function
+            if init == "refine"
+                metainit = (data, k; kw...)->init_centroid_refine(data, k; J, kw...)
+            elseif init == "smoothnn"
+                metainit = (data, k; kw...)->init_centroid_metann(data, k; ρ, kw...)
+            else
+                error("wut")
+            end
+            local innerinit::Function
+            if init0 == "++"
+                innerinit = (data, k; kw...)->init_centroid_pp(data, k; ncandidates, kw...)
+            elseif init0 == "unif"
+                innerinit = (data, k; kw...)->init_centroid_unif(data, k; kw...)
+            elseif init0 == "nn"
+                innerinit = (data, k; kw...)->init_centroid_nn(data, k; kw...)
+            elseif init0 == "maxmin"
+                innerinit = (data, k; kw...)->init_centroid_maxmin(data, k; kw...)
+            elseif init0 == "hnn"
+                innerinit = (data, k; kw...)->init_centroid_hnn(data, k; kw...)
+            else
+                error("wat")
+            end
+            wrappers = Vector{Function}(undef, rlevel)
+            wrappers[1] = (data, k; kw...)->metainit(data, k; init=innerinit, kw...)
+            for l in 2:rlevel
+                wrappers[l] = (data, k; kw...)->metainit(data, k; init=wrappers[l-1], kw...)
+            end
+            config = wrappers[end](data, k)
         end
     else
         centroids = init
