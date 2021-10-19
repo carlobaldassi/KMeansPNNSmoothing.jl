@@ -501,16 +501,16 @@ function init_centroid_ppnn(data::Matrix{Float64}, k::Int; ncandidates = nothing
     return mconfig
 end
 
-function metainit(data::Matrix{Float64}, k::Int)
+function recnninit(data::Matrix{Float64}, k::Int)
     m, n = size(data)
     if n ≤ 2k
         return init_centroid_nn(data, k)
     else
-        return init_centroid_metann(data, k; init = metainit)
+        return init_centroid_metann(data, k; init = recnninit)
     end
 end
 
-function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_pp, ρ = 0.5)
+function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_maxmin, ρ = 0.5)
     DataLogging.@push_prefix! "INIT_METANN"
     m, n = size(data)
     J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
@@ -764,10 +764,17 @@ function kmeans(
     if init isa String
         init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
         if init ∈ all_rec_methods
-            init0 ∈ all_basic_methods || throw(ArgumentError("when init=$init, init0 should be one of: $all_basic_methods"))
-            rlevel ≤ 0 && (rlevel = 1)
+            if init0 ∈ all_basic_methods
+                rlevel ≤ 0 && (rlevel = 1)
+            elseif init0 == "self"
+                init == "smoothnn" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
+                rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init and init0=$init0")
+            else
+                throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
+            end
         else
             init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
+            rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init")
         end
     end
 
@@ -801,7 +808,10 @@ function kmeans(
             else
                 error("wat")
             end
-        else # init ∈ all_rec_methods
+        elseif init == "smoothnn" && init0 == "self"
+            @assert rlevel == 0
+            config = init_centroid_metann(data, k; ρ, init=recnninit)
+        else
             @assert rlevel ≥ 1
             local metainit::Function
             if init == "refine"
