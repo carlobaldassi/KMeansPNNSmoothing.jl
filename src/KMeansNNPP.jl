@@ -747,7 +747,7 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        init::Union{String,Matrix{Float64}} = "++",
+        init::Union{AbstractString,Matrix{Float64}} = "++",
         verbose::Bool = true,
         tol::Float64 = 1e-5,
         ncandidates::Union{Nothing,Int} = nothing,
@@ -755,13 +755,13 @@ function kmeans(
         logfile::AbstractString = "",
         J::Int = 10,
         rlevel::Int = 0,
-        init0::String = "",
+        init0::AbstractString = "",
     )
     # allmethods = ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin", "hnn2", "maxminnn", "maxminnnnn", "maxmi7n"]
     all_basic_methods = ["++", "unif", "nn", "maxmin", "hnn"]
     all_rec_methods = ["refine", "smoothnn"]
     all_methods = [all_basic_methods; all_rec_methods]
-    if init isa String
+    if init isa AbstractString
         init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
         if init ∈ all_rec_methods
             if init0 ∈ all_basic_methods
@@ -793,7 +793,7 @@ function kmeans(
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
 
-    if init isa String
+    if init isa AbstractString
         if init ∈ all_basic_methods
             if init == "++"
                 config = init_centroid_pp(data, k; ncandidates)
