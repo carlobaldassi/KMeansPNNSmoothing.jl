@@ -142,7 +142,7 @@ end
 
 let centroidsdict = Dict{NTuple{2,Int},Matrix{Float64}}()
 
-    global function centroids_from_partition!(config::Configuration, data::Matrix{Float64})
+    global function centroids_from_partition!(config::Configuration, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids active nonempty csizes
         @assert size(data) == (m, n)
 
@@ -151,14 +151,18 @@ let centroidsdict = Dict{NTuple{2,Int},Matrix{Float64}}()
         end
         fill!(new_centroids, 0.0)
         fill!(active, false)
+        zs = zeros(k)
         @inbounds for i = 1:n
             j = c[i]
+            wi = w ≡ nothing ? 1 : w[i]
             for l = 1:m
-                new_centroids[l,j] += data[l,i]
+                new_centroids[l,j] += wi * data[l,i]
             end
+            zs[j] += wi
         end
         @inbounds for j = 1:k
-            z = csizes[j]
+            # z = csizes[j]
+            z = zs[j]
             z > 0 || continue
             @assert nonempty[j]
             for l = 1:m
@@ -212,7 +216,7 @@ function init_centroid_unif(data::Matrix{Float64}, k::Int; kw...)
     return config
 end
 
-function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64})
+function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::Nothing = nothing)
     m, n = size(data)
     @assert length(costs) == n
     @assert length(x) == m
@@ -222,9 +226,21 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
     end
     return costs
 end
-compute_costs_one(data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, x)
 
-function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing)
+function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::AbstractVector{<:Real})
+    m, n = size(data)
+    @assert length(costs) == n
+    @assert length(x) == m
+    @assert length(w) == n
+
+    @inbounds for i = 1:n
+        @views costs[i] = w[i] * _cost(data[:,i], x)
+    end
+    return costs
+end
+compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
+
+function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, w = nothing)
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k
@@ -237,11 +253,11 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing)
 
     t = @elapsed config = begin
         centr = zeros(m, k)
-        y = rand(1:n)
+        y = (w ≡ nothing ? rand(1:n) : sample(1:n, Weights(w)))
         datay = data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data, datay)
+        costs = compute_costs_one(data, datay) #, w)
 
         curr_cost = sum(costs)
         c = ones(Int, n)
@@ -249,14 +265,14 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing)
         new_costs, new_c = similar(costs), similar(c)
         new_costs_best, new_c_best = similar(costs), similar(c)
         for j = 2:k
-            pw = Weights(costs)
+            pw = Weights(w ≡ nothing ? costs : costs .* w)
             nonz = count(pw .≠ 0)
             candidates = sample(1:n, pw, min(ncandidates,n,nonz), replace = false)
             cost_best = Inf
             y_best = 0
             for y in candidates
                 datay = data[:,y]
-                compute_costs_one!(new_costs, data, datay)
+                compute_costs_one!(new_costs, data, datay) #, w)
                 cost = 0.0
                 @inbounds for i = 1:n
                     v = new_costs[i]
@@ -715,14 +731,72 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroi
     return mconfig
 end
 
-function lloyd!(config::Configuration, data::Matrix{Float64}, max_it::Int, tol::Float64, verbose::Bool)
+function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::Float64 = 2.0)
+    DataLogging.@push_prefix! "INIT_PARA"
+    m, n = size(data)
+    @assert n ≥ k
+
+    DataLogging.@log "INPUTS m: $m n: $n k: $k"
+
+    t = @elapsed config = begin
+        centr = zeros(m, 1)
+        y = rand(1:n)
+        datay = data[:,y]
+        centr[:,1] = datay
+
+        costs = compute_costs_one(data, datay)
+
+        cost = sum(costs)
+        c = ones(Int, n)
+
+        k′ = 1
+        for r in 1:rounds
+            w = (ϕ * k) / cost .* costs
+            add_inds = findall(rand(n) .< w)
+            add_k = length(add_inds)
+            add_centr = data[:,add_inds]
+            cost = 0.0
+            @inbounds for i in 1:n
+                v, x = costs[i], c[i]
+                for j in 1:add_k
+                    @views v′ = _cost(data[:,i], add_centr[:,j])
+                    if v′ < v
+                        v, x = v′, k′ + j
+                    end
+                end
+                costs[i], c[i] = v, x
+                cost += v
+            end
+            centr = hcat(centr, add_centr)
+            k′ += add_k
+        end
+        @assert k′ ≥ k
+        z = zeros(k′)
+        for i = 1:n
+            z[c[i]] += 1
+        end
+        # @assert all(z .> 0)
+        cconfig = init_centroid_pp(centr, k; ncandidates=1, w=z)
+        lloyd!(cconfig, centr, 1_000, 0.0, false, z)
+        Configuration(data, cconfig.centroids)
+        # mconfig = Configuration(m, k′, n, c, costs, centr)
+        # pairwise_nn!(mconfig, k)
+        # partition_from_centroids!(mconfig, data)
+        # mconfig
+    end
+    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@pop_prefix!
+    return config
+end
+
+function lloyd!(config::Configuration, data::Matrix{Float64}, max_it::Int, tol::Float64, verbose::Bool, w::Union{Vector{<:Real},Nothing} = nothing)
     DataLogging.@push_prefix! "LLOYD"
     DataLogging.@log "INPUTS max_it: $max_it tol: $tol"
     cost0 = config.cost
     converged = false
     it = 0
     t = @elapsed for outer it = 1:max_it
-        centroids_from_partition!(config, data)
+        centroids_from_partition!(config, data, w)
         old_cost = config.cost
         found_empty = check_empty!(config, data)
         partition_from_centroids!(config, data)
@@ -762,9 +836,10 @@ function kmeans(
         J::Int = 10,
         rlevel::Int = 0,
         init0::AbstractString = "",
+        rounds::Int = 5,
     )
     # allmethods = ["++", "unif", "++nn", "nn", "refine", "refine++", "hnn", "maxmin", "hnn2", "maxminnn", "maxminnnnn", "maxmi7n"]
-    all_basic_methods = ["++", "unif", "nn", "maxmin", "hnn"]
+    all_basic_methods = ["++", "unif", "nn", "maxmin", "hnn", "para"]
     all_rec_methods = ["refine", "smoothnn"]
     all_methods = [all_basic_methods; all_rec_methods]
     if init isa AbstractString
@@ -811,6 +886,8 @@ function kmeans(
                 config = init_centroid_maxmin(data, k)
             elseif init == "hnn"
                 config = init_centroid_hnn(data, k)
+            elseif init == "para"
+                config = init_centroid_para(data, k; rounds)
             else
                 error("wat")
             end
@@ -838,6 +915,8 @@ function kmeans(
                 innerinit = (data, k; kw...)->init_centroid_maxmin(data, k; kw...)
             elseif init0 == "hnn"
                 innerinit = (data, k; kw...)->init_centroid_hnn(data, k; kw...)
+            elseif init0 == "para"
+                innerinit = (data, k; kw...)->init_centroid_para(data, k; rounds, kw...)
             else
                 error("wat")
             end
