@@ -332,7 +332,7 @@ function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
 end
 
 function pairwise_nn!(config::Configuration, tgt_k::Int)
-    @extract config : m k n c costs centroids csizes
+    @extract config : m k n centroids csizes
     DataLogging.@push_prefix! "PNN"
     DataLogging.@log "INPUTS k: $k tgt_k: $tgt_k"
     if k < tgt_k
