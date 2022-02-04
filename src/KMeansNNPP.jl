@@ -46,7 +46,7 @@ mutable struct Configuration
     end
 end
 
-function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64})
+function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     m, n = size(data)
     k = size(centroids, 2)
     @assert size(centroids, 1) == m
@@ -54,7 +54,7 @@ function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64})
     c = zeros(Int, n)
     costs = fill(Inf, n)
     config = Configuration(m, k, n, c, costs, centroids)
-    partition_from_centroids!(config, data)
+    partition_from_centroids!(config, data, w)
     return config
 end
 
@@ -95,7 +95,7 @@ Base.@propagate_inbounds function _cost(d1, d2)
 end
 
 
-function partition_from_centroids!(config::Configuration, data::Matrix{Float64})
+function partition_from_centroids!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids active nonempty csizes
     @assert size(data) == (m, n)
 
@@ -112,9 +112,10 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64})
     cost = 0.0
     t = @elapsed @inbounds for i in 1:n
         ci = c[i]
+        wi = w ≡ nothing ? 1 : w[i]
         if ci > 0 && active[ci]
             old_v′ = costs[i]
-            @views new_v′ = _cost(data[:,i], centroids[:,ci])
+            @views new_v′ = wi * _cost(data[:,i], centroids[:,ci])
             fullsearch = (new_v′ > old_v′)
         else
             fullsearch = (ci == 0)
@@ -123,7 +124,7 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64})
 
         v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
         for j in inds
-            @views v′ = _cost(data[:,i], centroids[:,j])
+            @views v′ = wi * _cost(data[:,i], centroids[:,j])
             if v′ < v
                 v, x = v′, j
             end
@@ -257,7 +258,7 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, 
         datay = data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data, datay) #, w)
+        costs = compute_costs_one(data, datay, w)
 
         curr_cost = sum(costs)
         c = ones(Int, n)
@@ -272,7 +273,7 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, 
             y_best = 0
             for y in candidates
                 datay = data[:,y]
-                compute_costs_one!(new_costs, data, datay) #, w)
+                compute_costs_one!(new_costs, data, datay, w)
                 cost = 0.0
                 @inbounds for i = 1:n
                     v = new_costs[i]
@@ -799,7 +800,7 @@ function lloyd!(config::Configuration, data::Matrix{Float64}, max_it::Int, tol::
         centroids_from_partition!(config, data, w)
         old_cost = config.cost
         found_empty = check_empty!(config, data)
-        partition_from_centroids!(config, data)
+        partition_from_centroids!(config, data, w)
         new_cost = config.cost
         DataLogging.@log "it: $it cost: $(config.cost)$(found_empty ? "[found_empty]" : ""))"
         if new_cost ≥ old_cost * (1 - tol) && !found_empty
