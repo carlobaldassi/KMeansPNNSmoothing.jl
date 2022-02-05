@@ -109,8 +109,9 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     fill!(csizes, 0)
 
     num_fullsearch = 0
-    cost = 0.0
-    t = @elapsed @inbounds for i in 1:n
+    # cost = 0.0
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
         ci = c[i]
         wi = w ≡ nothing ? 1 : w[i]
         if ci > 0 && active[ci]
@@ -130,9 +131,15 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
             end
         end
         costs[i], c[i] = v, x
-        nonempty[x] = true
-        csizes[x] += 1
-        cost += v
+        # nonempty[x] = true
+        # csizes[x] += 1
+        # cost += v
+        end
+    end
+    cost = sum(costs)
+    for i in 1:n
+        csizes[c[i]] += 1
+        nonempty[c[i]] = true
     end
 
     config.cost = cost
@@ -141,13 +148,13 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     return config
 end
 
-let centroidsdict = Dict{NTuple{2,Int},Matrix{Float64}}()
+let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}()
 
     global function centroids_from_partition!(config::Configuration, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids active nonempty csizes
         @assert size(data) == (m, n)
 
-        new_centroids = get!(centroidsdict, (m,k)) do
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
         fill!(new_centroids, 0.0)
@@ -222,8 +229,8 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
     @assert length(costs) == n
     @assert length(x) == m
 
-    @inbounds for i = 1:n
-        @views costs[i] = _cost(data[:,i], x)
+    Threads.@threads for i = 1:n
+        @inbounds @views costs[i] = _cost(data[:,i], x)
     end
     return costs
 end
@@ -234,8 +241,8 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
     @assert length(x) == m
     @assert length(w) == n
 
-    @inbounds for i = 1:n
-        @views costs[i] = w[i] * _cost(data[:,i], x)
+    Threads.@threads for i = 1:n
+        @inbounds @views costs[i] = w[i] * _cost(data[:,i], x)
     end
     return costs
 end
@@ -348,6 +355,48 @@ function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
     return config
 end
 
+Base.@propagate_inbounds function _merge_cost(centroids::AbstractMatrix{<:Float64}, z::Int, z′::Int, j::Int, j′::Int)
+    return @views (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
+end
+
+function _get_nns(vs, j, k, centroids, csizes)
+    z = csizes[j]
+    fill!(vs, (Inf, 0))
+    Threads.@threads for j′ = 1:k
+        j′ == j && continue
+        @inbounds begin
+            v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
+            id = Threads.threadid()
+            if v1 < vs[id][1]
+                vs[id] = v1, j′
+            end
+        end
+    end
+    v, x = Inf, 0
+    for id in 1:Threads.nthreads()
+        if vs[id][1] < v
+            v, x = vs[id]
+        end
+    end
+    return v, x
+end
+
+# function _get_nns(j, k, centroids, csizes)
+#     z = csizes[j]
+#     v, x = Inf, 0
+#     @inbounds for j′ = 1:k
+#         j′ == j && continue
+#         z′ = csizes[j′]
+#         # @views v1 = (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
+#         v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
+#         if v1 < v
+#             v, x = v1, j′
+#         end
+#     end
+#     return v, x
+# end
+
+
 function pairwise_nn!(config::Configuration, tgt_k::Int)
     @extract config : m k n centroids csizes
     DataLogging.@push_prefix! "PNN"
@@ -369,19 +418,9 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
     # @assert csizes == csizes′
     nns = zeros(Int, k)
     nns_costs = fill(Inf, k)
+    vs = Threads.resize_nthreads!(Tuple{Float64,Int}[], (Inf, 0))
     t_costs = @elapsed @inbounds for j = 1:k
-        z = csizes[j]
-        v, x = Inf, 0
-        for j′ = 1:k
-            j′ == j && continue
-            z′ = csizes[j′]
-            @views v1 = (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
-            if v1 < v
-                v = v1
-                x = j′
-            end
-        end
-        nns_costs[j], nns[j] = v, x
+        nns_costs[j], nns[j] = _get_nns(vs, j, k, centroids, csizes)
     end
 
     t_fuse = @elapsed @inbounds while k > tgt_k
@@ -429,17 +468,7 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
             #    perform a full update
             if j == jm || nns[j] == jm || nns[j] == js
                 num_fullupdates += 1
-                z = csizes[j]
-                v, x = Inf, 0
-                for j′ = 1:(k-1)
-                    j′ == j && continue
-                    z′ = csizes[j′]
-                    @views v1 = (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
-                    if v1 < v
-                        v, x = v1, j′
-                    end
-                end
-                nns_costs[j], nns[j] = v, x
+                nns_costs[j], nns[j] = _get_nns(vs, j, k-1, centroids, csizes)
             # 2) clusters that did not point to jm or js
             #    only compare the old cost with the cost for the updated cluster
             else
@@ -448,7 +477,7 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
                 v, x = nns_costs[j], (nns[j] ≠ k ? nns[j] : js)
                 j′ = jm
                 z′ = csizes[j′]
-                @views v′ = (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
+                v′ = _merge_cost(centroids, z, z′, j, j′)
                 if v′ < v
                     v, x = v′, j′
                 end
@@ -546,7 +575,7 @@ function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroi
             split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
             @assert all(sum(split .== a) ≥ k for a = 1:J)
             configs = Vector{Configuration}(undef, J)
-            for a = 1:J
+            Threads.@threads for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = init(rdata, k)
@@ -756,8 +785,9 @@ function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::
             add_inds = findall(rand(n) .< w)
             add_k = length(add_inds)
             add_centr = data[:,add_inds]
-            cost = 0.0
-            @inbounds for i in 1:n
+            # cost = 0.0
+            Threads.@threads for i in 1:n
+                @inbounds begin
                 v, x = costs[i], c[i]
                 for j in 1:add_k
                     @views v′ = _cost(data[:,i], add_centr[:,j])
@@ -766,8 +796,10 @@ function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::
                     end
                 end
                 costs[i], c[i] = v, x
-                cost += v
+                # cost += v
+                end
             end
+            cost = sum(costs)
             centr = hcat(centr, add_centr)
             k′ += add_k
         end
@@ -778,7 +810,7 @@ function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::
         end
         # @assert all(z .> 0)
         cconfig = init_centroid_pp(centr, k; ncandidates=1, w=z)
-        lloyd!(cconfig, centr, 1_000, 0.0, false, z)
+        lloyd!(cconfig, centr, 1_000, 1e-4, false, z)
         Configuration(data, cconfig.centroids)
         # mconfig = Configuration(m, k′, n, c, costs, centr)
         # pairwise_nn!(mconfig, k)
@@ -871,7 +903,14 @@ function kmeans(
 
     DataLogging.@push_prefix! "KMEANS"
 
-    seed ≢ nothing && Random.seed!(seed)
+    if seed ≢ nothing
+        Random.seed!(seed)
+        if VERSION < v"1.7"
+            Threads.@threads for h = 1:Threads.nthreads()
+                Random.seed!(seed + h)
+            end
+        end
+    end
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
 
