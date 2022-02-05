@@ -108,8 +108,8 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     fill!(nonempty, false)
     fill!(csizes, 0)
 
-    num_fullsearch = 0
-    # cost = 0.0
+    num_fullsearch_th = zeros(Int, Threads.nthreads())
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
         ci = c[i]
@@ -121,7 +121,7 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
         else
             fullsearch = (ci == 0)
         end
-        num_fullsearch += fullsearch
+        num_fullsearch_th[Threads.threadid()] += fullsearch
 
         v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
         for j in inds
@@ -131,16 +131,15 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
             end
         end
         costs[i], c[i] = v, x
-        # nonempty[x] = true
-        # csizes[x] += 1
-        # cost += v
         end
     end
     cost = sum(costs)
     for i in 1:n
-        csizes[c[i]] += 1
-        nonempty[c[i]] = true
+        ci = c[i]
+        csizes[ci] += 1
+        nonempty[ci] = true
     end
+    num_fullsearch = sum(num_fullsearch_th)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
