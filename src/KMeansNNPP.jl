@@ -359,6 +359,7 @@ Base.@propagate_inbounds function _merge_cost(centroids::AbstractMatrix{<:Float6
 end
 
 function _get_nns(vs, j, k, centroids, csizes)
+    k < 500 && return _get_nns(j, k, centroids, csizes)
     z = csizes[j]
     fill!(vs, (Inf, 0))
     Threads.@threads for j′ = 1:k
@@ -380,20 +381,19 @@ function _get_nns(vs, j, k, centroids, csizes)
     return v, x
 end
 
-# function _get_nns(j, k, centroids, csizes)
-#     z = csizes[j]
-#     v, x = Inf, 0
-#     @inbounds for j′ = 1:k
-#         j′ == j && continue
-#         z′ = csizes[j′]
-#         # @views v1 = (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
-#         v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
-#         if v1 < v
-#             v, x = v1, j′
-#         end
-#     end
-#     return v, x
-# end
+function _get_nns(j, k, centroids, csizes)
+    z = csizes[j]
+    v, x = Inf, 0
+    @inbounds for j′ = 1:k
+        j′ == j && continue
+        z′ = csizes[j′]
+        v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
+        if v1 < v
+            v, x = v1, j′
+        end
+    end
+    return v, x
+end
 
 
 function pairwise_nn!(config::Configuration, tgt_k::Int)
