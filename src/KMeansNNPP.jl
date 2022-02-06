@@ -356,7 +356,6 @@ function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
 
         costs = compute_costs_one(data, datay)
 
-        cost = sum(costs)
         c = ones(Int, n)
 
         for j = 2:k
@@ -368,7 +367,6 @@ function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
                 if new_v < old_v
                     costs[i] = new_v
                     c[i] = j
-                    cost += new_v - old_v
                 end
             end
             centr[:,j] .= datay
