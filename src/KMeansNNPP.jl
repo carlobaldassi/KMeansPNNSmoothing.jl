@@ -755,7 +755,7 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroi
             split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
             @assert all(sum(split .== a) ≥ k for a = 1:J)
             configs = Vector{Configuration}(undef, J)
-            for a = 1:J
+            Threads.@threads for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = init(rdata, k)
