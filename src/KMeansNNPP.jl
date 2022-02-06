@@ -275,6 +275,7 @@ end
 compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
 function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, w = nothing)
+    ncandidates == 1 && return init_centroid_pp1(data, k; w)
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k
@@ -341,7 +342,8 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, 
     return config
 end
 
-function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64})
+
+function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::Nothing = nothing)
     m, n = size(data)
     @assert length(costs) == n
     @assert length(c) == n
@@ -358,6 +360,59 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
         end
     end
     return costs
+end
+
+function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::AbstractVector{<:Real})
+    m, n = size(data)
+    @assert length(costs) == n
+    @assert length(c) == n
+    @assert length(x) == m
+
+    Threads.@threads for i = 1:n
+        @inbounds begin
+            old_v = costs[i]
+            new_v = w[i] * _cost(@view(data[:,i]), x)
+            if new_v < old_v
+                costs[i] = new_v
+                c[i] = j
+            end
+        end
+    end
+    return costs
+end
+
+function init_centroid_pp1(data::Matrix{Float64}, k::Int; w = nothing)
+    DataLogging.@push_prefix! "INIT_PP1"
+    m, n = size(data)
+    @assert n ≥ k
+
+    DataLogging.@log "INPUTS m: $m n: $n k: $k"
+
+    t = @elapsed config = begin
+        centr = zeros(m, k)
+        y = (w ≡ nothing ? rand(1:n) : sample(1:n, Weights(w)))
+        datay = data[:,y]
+        centr[:,1] = datay
+
+        costs = compute_costs_one(data, datay, w)
+
+        c = ones(Int, n)
+
+        for j = 2:k
+            pw = Weights(w ≡ nothing ? costs : costs .* w)
+            y = sample(1:n, pw)
+            datay = data[:,y]
+
+            update_costs_one!(costs, c, j, data, datay, w)
+
+            centr[:,j] .= datay
+        end
+        # returning config
+        Configuration(m, k, n, c, costs, centr)
+    end
+    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@pop_prefix!
+    return config
 end
 
 function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
