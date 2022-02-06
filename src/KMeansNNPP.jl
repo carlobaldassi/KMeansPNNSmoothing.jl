@@ -112,25 +112,25 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-        ci = c[i]
-        wi = w ≡ nothing ? 1 : w[i]
-        if ci > 0 && active[ci]
-            old_v′ = costs[i]
-            @views new_v′ = wi * _cost(data[:,i], centroids[:,ci])
-            fullsearch = (new_v′ > old_v′)
-        else
-            fullsearch = (ci == 0)
-        end
-        num_fullsearch_th[Threads.threadid()] += fullsearch
-
-        v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
-        for j in inds
-            @views v′ = wi * _cost(data[:,i], centroids[:,j])
-            if v′ < v
-                v, x = v′, j
+            ci = c[i]
+            wi = w ≡ nothing ? 1 : w[i]
+            if ci > 0 && active[ci]
+                old_v′ = costs[i]
+                @views new_v′ = wi * _cost(data[:,i], centroids[:,ci])
+                fullsearch = (new_v′ > old_v′)
+            else
+                fullsearch = (ci == 0)
             end
-        end
-        costs[i], c[i] = v, x
+            num_fullsearch_th[Threads.threadid()] += fullsearch
+
+            v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
+            for j in inds
+                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
         end
     end
     cost = sum(costs)
@@ -784,18 +784,16 @@ function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::
             add_inds = findall(rand(n) .< w)
             add_k = length(add_inds)
             add_centr = data[:,add_inds]
-            # cost = 0.0
             Threads.@threads for i in 1:n
                 @inbounds begin
-                v, x = costs[i], c[i]
-                for j in 1:add_k
-                    @views v′ = _cost(data[:,i], add_centr[:,j])
-                    if v′ < v
-                        v, x = v′, k′ + j
+                    v, x = costs[i], c[i]
+                    for j in 1:add_k
+                        @views v′ = _cost(data[:,i], add_centr[:,j])
+                        if v′ < v
+                            v, x = v′, k′ + j
+                        end
                     end
-                end
-                costs[i], c[i] = v, x
-                # cost += v
+                    costs[i], c[i] = v, x
                 end
             end
             cost = sum(costs)
