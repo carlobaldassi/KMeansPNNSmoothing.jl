@@ -929,7 +929,7 @@ function kmeans(
 
     if seed ≢ nothing
         Random.seed!(seed)
-        if VERSION < v"1.7"
+        if VERSION < v"1.7-"
             Threads.@threads for h = 1:Threads.nthreads()
                 Random.seed!(seed + h)
             end
