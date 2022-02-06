@@ -341,6 +341,25 @@ function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, 
     return config
 end
 
+function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64})
+    m, n = size(data)
+    @assert length(costs) == n
+    @assert length(c) == n
+    @assert length(x) == m
+
+    Threads.@threads for i = 1:n
+        @inbounds begin
+            old_v = costs[i]
+            new_v = _cost(@view(data[:,i]), x)
+            if new_v < old_v
+                costs[i] = new_v
+                c[i] = j
+            end
+        end
+    end
+    return costs
+end
+
 function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
     DataLogging.@push_prefix! "INIT_MAXMIN"
     m, n = size(data)
@@ -361,14 +380,9 @@ function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
         for j = 2:k
             y = argmax(costs)
             datay = data[:,y]
-            @inbounds for i = 1:n
-                old_v = costs[i]
-                new_v = _cost(@view(data[:,i]), datay)
-                if new_v < old_v
-                    costs[i] = new_v
-                    c[i] = j
-                end
-            end
+
+            update_costs_one!(costs, c, j, data, datay)
+
             centr[:,j] .= datay
         end
         # returning config
