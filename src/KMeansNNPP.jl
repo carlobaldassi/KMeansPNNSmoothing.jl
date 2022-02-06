@@ -147,7 +147,10 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     return config
 end
 
-let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}()
+let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
+    centroidsthrdict = Dict{NTuple{3,Int},Vector{Matrix{Float64}}}(),
+    zsdict = Dict{NTuple{2,Int},Vector{Float64}}(),
+    zsthrdict = Dict{NTuple{2,Int},Vector{Vector{Float64}}}()
 
     global function centroids_from_partition!(config::Configuration, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids active nonempty csizes
@@ -156,19 +159,40 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}()
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        fill!(new_centroids, 0.0)
-        fill!(active, false)
-        zs = zeros(k)
-        @inbounds for i = 1:n
-            j = c[i]
-            wi = w ≡ nothing ? 1 : w[i]
-            for l = 1:m
-                new_centroids[l,j] += wi * data[l,i]
-            end
-            zs[j] += wi
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                wi = w ≡ nothing ? 1 : w[i]
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += wi * data[l,i]
+                end
+                zs_thr[id][j] += wi
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        fill!(active, false)
         @inbounds for j = 1:k
-            # z = csizes[j]
             z = zs[j]
             z > 0 || continue
             @assert nonempty[j]
@@ -183,6 +207,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}()
 
     global function clear_cache!()
         empty!(centroidsdict)
+        empty!(centroidsthrdict)
+        empty!(zsdict)
+        empty!(zsthrdict)
     end
 end
 
