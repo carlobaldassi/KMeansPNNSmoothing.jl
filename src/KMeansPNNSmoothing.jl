@@ -698,7 +698,7 @@ function kmeans(
         init0::AbstractString = "",
         rounds::Int = 5,
     )
-    all_basic_methods = ["++", "unif", "nn", "maxmin", "para"]
+    all_basic_methods = ["++", "unif", "pnn", "maxmin", "para"]
     all_rec_methods = ["refine", "smoothnn"]
     all_methods = [all_basic_methods; all_rec_methods]
     if init isa AbstractString
@@ -734,7 +734,7 @@ function kmeans(
                 config = init_centroid_pp(data, k; ncandidates)
             elseif init == "unif"
                 config = init_centroid_unif(data, k)
-            elseif init == "nn"
+            elseif init == "pnn"
                 config = init_centroid_nn(data, k)
             elseif init == "maxmin"
                 config = init_centroid_maxmin(data, k)
@@ -761,7 +761,7 @@ function kmeans(
                 innerinit = (data, k; kw...)->init_centroid_pp(data, k; ncandidates, kw...)
             elseif init0 == "unif"
                 innerinit = (data, k; kw...)->init_centroid_unif(data, k; kw...)
-            elseif init0 == "nn"
+            elseif init0 == "pnn"
                 innerinit = (data, k; kw...)->init_centroid_nn(data, k; kw...)
             elseif init0 == "maxmin"
                 innerinit = (data, k; kw...)->init_centroid_maxmin(data, k; kw...)
