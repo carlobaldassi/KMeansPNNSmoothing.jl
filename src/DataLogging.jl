@@ -20,6 +20,9 @@ function Base.close(dlogger::DataLogger)
 end
 
 const logging_on = parse(Bool, get(ENV, "DATALOGGING", "false"))
+if logging_on && Threads.nthreads() > 1
+    @warn "DataLogging does not work well with multithreading"
+end
 
 let logger_stack = DataLogger[]
     global function init_logger(filename::AbstractString, mode::String = "a")
