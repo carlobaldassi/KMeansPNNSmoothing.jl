@@ -44,8 +44,8 @@ end
     @test result.exit_status == :converged
 end
 
-@testset "kmeansNN" begin
-    result = kmeans(a3, k, init="nn", verbose=false)
+@testset "kmeans PNN" begin
+    result = kmeans(a3, k, init="pnn", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
