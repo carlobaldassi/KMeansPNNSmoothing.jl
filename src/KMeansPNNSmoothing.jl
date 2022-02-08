@@ -1,6 +1,6 @@
 # grouping method from Kaukoranta, Fränti, Nevlainen, "Reduced comparison for the exact GLA"
 
-module KMeansNNPP
+module KMeansPNNSmoothing
 
 using Random
 using Statistics
