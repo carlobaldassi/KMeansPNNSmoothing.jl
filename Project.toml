@@ -1,4 +1,4 @@
-name = "KMeansNNPP"
+name = "KMeansPNNSmoothing"
 uuid = "557a99b1-8e5d-4db2-a9c8-ad30d6f7bacb"
 authors = ["Carlo Baldassi <carlobaldassi@gmail.com>"]
 version = "0.1.0"

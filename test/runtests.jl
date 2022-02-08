@@ -1,4 +1,4 @@
-using KMeansNNPP
+using KMeansPNNSmoothing
 using Test
 using DelimitedFiles
 
