@@ -18,7 +18,8 @@ n, m = size(a3)
 k = 50
 
 @testset "kmeans uniform" begin
-    result = kmeans(a3, k, init="unif", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMUnif()
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -27,7 +28,8 @@ k = 50
 end
 
 @testset "kmeans++" begin
-    result = kmeans(a3, k, init="++", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPlusPlus()
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -36,7 +38,8 @@ end
 end
 
 @testset "kmeans PNN" begin
-    result = kmeans(a3, k, init="pnn", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNN()
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -45,7 +48,8 @@ end
 end
 
 @testset "kmeans||" begin
-    result = kmeans(a3, k, init="scala", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMScala()
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -55,21 +59,26 @@ end
 
 
 @testset "kmeans PNNS(UNIF)" begin
-    result = kmeans(a3, k, init="pnns", init0="unif", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMUnif())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="unif", rlevel=2, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMUnif(); rlevel=2)
+    # result = kmeans(a3, k, init="pnns", init0="unif", rlevel=2, verbose=false)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="unif", rlevel=3, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMUnif(); rlevel=3)
+    # result = kmeans(a3, k, init="pnns", init0="unif", rlevel=3, verbose=false)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -78,28 +87,32 @@ end
 end
 
 @testset "kmeans PNNS([G]KM++)" begin
-    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=1, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMPlusPlus{1}())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=1, rlevel=2, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMPlusPlus{1}(); rlevel=2)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=nothing, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMPlusPlus())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=nothing, rlevel=2, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMPlusPlus(); rlevel=2)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -108,14 +121,16 @@ end
 end
 
 @testset "kmeans PNNS(MAXMIN)" begin
-    result = kmeans(a3, k, init="pnns", init0="maxmin", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMMaxMin())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="maxmin", rlevel=2, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMMaxMin(); rlevel=2)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -124,14 +139,16 @@ end
 end
 
 @testset "kmeans PNNS(SCALA)" begin
-    result = kmeans(a3, k, init="pnns", init0="scala", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMScala())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="pnns", init0="scala", rlevel=2, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNS(KMeansPNNSmoothing.KMScala(); rlevel=2)
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -140,7 +157,8 @@ end
 end
 
 @testset "kmeans PNNSR" begin
-    result = kmeans(a3, k, init="pnns", init0="self", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMPNNSR()
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -151,7 +169,8 @@ end
 
 
 @testset "kmeans REFINE(UNIF)" begin
-    result = kmeans(a3, k, init="refine", init0="unif", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMRefine(KMeansPNNSmoothing.KMUnif())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -160,7 +179,8 @@ end
 end
 
 @testset "kmeans REFINE(++)" begin
-    result = kmeans(a3, k, init="refine", init0="++", ncandidates=1, verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMRefine(KMeansPNNSmoothing.KMPlusPlus{1}())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -169,7 +189,8 @@ end
 end
 
 @testset "kmeans REFINE(MAXMIN)" begin
-    result = kmeans(a3, k, init="refine", init0="maxmin", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMRefine(KMeansPNNSmoothing.KMMaxMin())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -178,7 +199,8 @@ end
 end
 
 @testset "kmeans REFINE(SCALA)" begin
-    result = kmeans(a3, k, init="refine", init0="scala", verbose=false)
+    kmseeder = KMeansPNNSmoothing.KMRefine(KMeansPNNSmoothing.KMScala())
+    result = kmeans(a3, k; kmseeder, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
