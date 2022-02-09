@@ -991,10 +991,10 @@ The keyword arguments related to the `init` methods are:
   argument can be any of the other methods listed above, or `"self"` for the fully-recursive
   version of `"pnns"`. If left empty (the default), then `"++"` with `ncandidates=1` will be used.
 * `ρ`: a `Float64`, sets the number of sub-sets when `init="pnns"`. By default it is `0.5`.
-  The formula is $⌈√(ρ N / k)⌉$ where $N$ is the number of data points and $k$ the number of
+  The formula is ``⌈√(ρ N / k)⌉`` where ``N`` is the number of data points and ``k`` the number of
   clusters, but the result is clamped between `1` and `N÷k`.
 * `J`: the number of sub-sets when `init="refine"`. By default it is `10`. Note that you must ensure
-  that $J k ≤ N$.
+  that ``J k ≤ N``.
 * `ncandidates`: if init=="++" or init0="++", set the number of candidates for k-means++ (the default is
   `nothing`, which means that it is set automatically to `log(2+k)`)
 * `rounds`: the number of rounds when `init="scala"` or `init0="scala"`.
