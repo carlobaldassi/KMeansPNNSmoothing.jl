@@ -214,7 +214,67 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
     return true
 end
 
-function init_centroid_unif(data::Matrix{Float64}, k::Int; kw...)
+abstract type KMeansSeeder end
+
+struct KMUnif <: KMeansSeeder
+end
+
+struct KMPlusPlus{NC} <: KMeansSeeder
+end
+
+KMPlusPlus() = KMPlusPlus{nothing}()
+
+struct KMMaxMin <: KMeansSeeder
+end
+
+struct KMScala <: KMeansSeeder
+    rounds::Int
+    ϕ::Float64
+    KMScala(rounds::Int = 5, ϕ::Float64 = 2.0) = new(rounds, ϕ)
+end
+
+struct KMPNN <: KMeansSeeder
+end
+
+abstract type KMMetaSeeder{S0<:KMeansSeeder} <: KMeansSeeder end
+
+struct _KMSelf <: KMeansSeeder
+end
+
+struct KMPNNS{S<:KMeansSeeder} <: KMMetaSeeder{S}
+    init0::S
+    ρ::Float64
+end
+function KMPNNS(init0::S = KMPlusPlus{1}(), ρ = 0.5; rlevel::Int = 1) where {S <: KMeansSeeder}
+    @assert rlevel ≥ 1
+    kmseeder = init0
+    for r = rlevel:-1:1
+        kmseeder = KMPNNS{typeof(kmseeder)}(kmseeder, ρ)
+    end
+    return kmseeder
+end
+
+const KMPNNSR = KMPNNS{_KMSelf}
+KMPNNSR(ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
+
+struct KMRefine{S<:KMeansSeeder} <: KMMetaSeeder{S}
+    init0::S
+    J::Int
+end
+function KMRefine(init0::S = KMPlusPlus{1}(), J = 10; rlevel::Int = 1) where {S <: KMeansSeeder}
+    @assert rlevel ≥ 1
+    kmseeder = init0
+    for r = rlevel:-1:1
+        kmseeder = KMRefine{typeof(kmseeder)}(kmseeder, J)
+    end
+    return kmseeder
+end
+
+
+
+
+
+function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int; kw...)
     m, n = size(data)
     # NOTE: the sampling uses Fisher-Yates when n < 24k, which is O(n+k);
     #       or self-avoid-sample (keep a set, resample if collisions happen)
@@ -253,12 +313,14 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
 end
 compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
-function init_centroid_pp(data::Matrix{Float64}, k::Int; ncandidates = nothing, w = nothing)
-    ncandidates == 1 && return init_centroid_pp1(data, k; w)
+init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int; kw...) =
+    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k)
+
+function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int; w = nothing) where NC
     m, n = size(data)
     @assert n ≥ k
 
-    ncandidates::Int = ncandidates ≡ nothing ? floor(Int, 2 + log(k)) : ncandidates
+    ncandidates::Int = NC
 
     centr = zeros(m, k)
     y = (w ≡ nothing ? rand(1:n) : sample(1:n, Weights(w)))
@@ -349,7 +411,7 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
     return costs
 end
 
-function init_centroid_pp1(data::Matrix{Float64}, k::Int; w = nothing)
+function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int; w = nothing)
     m, n = size(data)
     @assert n ≥ k
 
@@ -374,7 +436,7 @@ function init_centroid_pp1(data::Matrix{Float64}, k::Int; w = nothing)
     return Configuration(m, k, n, c, costs, centr)
 end
 
-function init_centroid_maxmin(data::Matrix{Float64}, k::Int)
+function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int)
     m, n = size(data)
     @assert n ≥ k
 
@@ -533,16 +595,19 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
     return
 end
 
-function recnninit(data::Matrix{Float64}, k::Int)
+function inner_init(S::KMPNNSR, data::Matrix{Float64}, k::Int)
     m, n = size(data)
     if n ≤ 2k
-        return init_centroid_nn(data, k)
+        return init_centroids(KMPNN(), data, k)
     else
-        return init_centroid_metann(data, k; init = recnninit)
+        return init_centroids(S, data, k)
     end
 end
 
-function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_pp1, ρ = 0.5)
+inner_init(S::KMMetaSeeder{S0}, data::Matrix{Float64}, k::Int) where S0 = init_centroids(S.init0, data, k)
+
+function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
+    @extract S : ρ
     m, n = size(data)
     J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
     @assert J * k ≤ n
@@ -553,7 +618,7 @@ function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroi
     configs = Vector{Configuration}(undef, J)
     Threads.@threads for a = 1:J
         rdata = data[:,split .== a]
-        config = init(rdata, k)
+        config = inner_init(S, rdata, k)
         lloyd!(config, rdata, 1_000, 1e-4, false)
         configs[a] = config
     end
@@ -574,7 +639,7 @@ function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroi
     return mconfig
 end
 
-function init_centroid_nn(data::Matrix{Float64}, k::Int)
+function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int)
     m, n = size(data)
 
     centroids = copy(data)
@@ -586,7 +651,8 @@ function init_centroid_nn(data::Matrix{Float64}, k::Int)
     return config
 end
 
-function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroid_pp, J = 10)
+function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
+    @extract S : J
     m, n = size(data)
     @assert J * k ≤ n
     split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
@@ -594,7 +660,7 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroi
     configs = Vector{Configuration}(undef, J)
     Threads.@threads for a = 1:J
         rdata = data[:,split .== a]
-        config = init(rdata, k)
+        config = inner_init(S, rdata, k)
         lloyd!(config, rdata, 1_000, 1e-4, false)
         configs[a] = config
     end
@@ -608,7 +674,8 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroi
     return Configuration(data, configs[a_best].centroids)
 end
 
-function init_centroid_scala(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::Float64 = 2.0)
+function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int)
+    @extract S : rounds ϕ
     m, n = size(data)
     @assert n ≥ k
 
@@ -650,12 +717,19 @@ function init_centroid_scala(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ:
         z[c[i]] += 1
     end
     # @assert all(z .> 0)
-    cconfig = init_centroid_pp(centr, k; ncandidates=1, w=z)
+    cconfig = init_centroids(KMPlusPlus{1}(), centr, k; w=z)
     lloyd!(cconfig, centr, 1_000, 1e-4, false, z)
     return Configuration(data, cconfig.centroids)
 end
 
-function lloyd!(config::Configuration, data::Matrix{Float64}, max_it::Int, tol::Float64, verbose::Bool, w::Union{Vector{<:Real},Nothing} = nothing)
+function lloyd!(
+        config::Configuration,
+        data::Matrix{Float64},
+        max_it::Int,
+        tol::Float64,
+        verbose::Bool,
+        w::Union{Vector{<:Real},Nothing} = nothing
+    )
     cost0 = config.cost
     converged = false
     it = 0
@@ -683,7 +757,6 @@ struct Results
 end
 
 Results(exit_status, config::Configuration) = Results(exit_status, config.c, config.centroids, config.cost)
-
 
 """
   kmeans(data::Matrix{Float64}, k::Integer; keywords...)
@@ -740,38 +813,11 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        init::Union{AbstractString,Matrix{Float64}} = "pnns",
+        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
         verbose::Bool = true,
         tol::Float64 = 1e-5,
-        ncandidates::Union{Nothing,Int} = nothing,
-        ρ::Float64 = 0.5,
-        J::Int = 10,
-        rlevel::Int = 1,
         init0::AbstractString = "",
-        rounds::Int = 5,
     )
-    all_basic_methods = ["++", "unif", "pnn", "maxmin", "scala"]
-    all_rec_methods = ["refine", "pnns"]
-    all_methods = [all_basic_methods; all_rec_methods]
-    if init isa AbstractString
-        init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
-        if init ∈ all_rec_methods
-            if init0 == ""
-                init0="++"
-                ncandidates ≡ nothing && (ncandidates = 1)
-            end
-            if init0 ∈ all_basic_methods
-                init == "pnns" && rlevel < 1 && throw(ArgumentError("when init=$init and init0=$init0 rlevel must be ≥ 1"))
-            elseif init0 == "self"
-                init == "pnns" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
-                rlevel = 0
-            else
-                throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
-            end
-        else
-            init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
-        end
-    end
 
     if seed ≢ nothing
         Random.seed!(seed)
@@ -783,58 +829,11 @@ function kmeans(
     end
     m, n = size(data)
 
-    if init isa AbstractString
-        if init ∈ all_basic_methods
-            if init == "++"
-                config = init_centroid_pp(data, k; ncandidates)
-            elseif init == "unif"
-                config = init_centroid_unif(data, k)
-            elseif init == "pnn"
-                config = init_centroid_nn(data, k)
-            elseif init == "maxmin"
-                config = init_centroid_maxmin(data, k)
-            elseif init == "scala"
-                config = init_centroid_scala(data, k; rounds)
-            else
-                error("wat")
-            end
-        elseif init == "pnns" && init0 == "self"
-            @assert rlevel == 0
-            config = init_centroid_metann(data, k; ρ, init=recnninit)
-        else
-            @assert rlevel ≥ 1
-            local metainit::Function
-            if init == "refine"
-                metainit = (data, k; kw...)->init_centroid_refine(data, k; J, kw...)
-            elseif init == "pnns"
-                metainit = (data, k; kw...)->init_centroid_metann(data, k; ρ, kw...)
-            else
-                error("wut")
-            end
-            local innerinit::Function
-            if init0 == "++"
-                innerinit = (data, k; kw...)->init_centroid_pp(data, k; ncandidates, kw...)
-            elseif init0 == "unif"
-                innerinit = (data, k; kw...)->init_centroid_unif(data, k; kw...)
-            elseif init0 == "pnn"
-                innerinit = (data, k; kw...)->init_centroid_nn(data, k; kw...)
-            elseif init0 == "maxmin"
-                innerinit = (data, k; kw...)->init_centroid_maxmin(data, k; kw...)
-            elseif init0 == "scala"
-                innerinit = (data, k; kw...)->init_centroid_scala(data, k; rounds, kw...)
-            else
-                error("wat")
-            end
-            wrappers = Vector{Function}(undef, rlevel)
-            wrappers[1] = (data, k; kw...)->metainit(data, k; init=innerinit, kw...)
-            for l in 2:rlevel
-                wrappers[l] = (data, k; kw...)->metainit(data, k; init=wrappers[l-1], kw...)
-            end
-            config = wrappers[end](data, k)
-        end
+    if kmseeder isa KMeansSeeder
+        config = init_centroids(kmseeder, data, k)
     else
-        centroids = init
-        size(centroids) == (m, k) || throw(ArgumentError("Incompatible init and data dimensions, data=$((m,k)) init=$(size(centroids))"))
+        centroids = kmseeder
+        size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
         config = Configuration(data, centroids)
     end
 
@@ -844,6 +843,63 @@ function kmeans(
     exit_status = converged ? :converged : :maxiters
 
     return Results(exit_status, config)
+end
+
+function gen_seeder(
+        init::AbstractString = "pnns"
+        ;
+        init0::AbstractString = "",
+        ρ::Float64 = 0.5,
+        ncandidates::Union{Nothing,Int} = nothing,
+        J::Int = 10,
+        rlevel::Int = 1,
+        rounds::Int = 5,
+        ϕ::Float64 = 2.0,
+    )
+    all_basic_methods = ["++", "unif", "pnn", "maxmin", "scala"]
+    all_rec_methods = ["refine", "pnns"]
+    all_methods = [all_basic_methods; all_rec_methods]
+    init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
+    if init ∈ all_rec_methods
+        if init0 == ""
+            init0="++"
+            ncandidates ≡ nothing && (ncandidates = 1)
+        end
+        if init0 ∈ all_basic_methods
+            init == "pnns" && rlevel < 1 && throw(ArgumentError("when init=$init and init0=$init0 rlevel must be ≥ 1"))
+        elseif init0 == "self"
+            init == "pnns" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
+            rlevel = 0
+        else
+            throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
+        end
+    else
+        init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
+    end
+
+    if init ∈ all_basic_methods
+        return init == "++"    ? KMPlusPlus{ncandidates}() :
+               init == "unif"   ? KMUnif() :
+               init == "pnn"    ? KMPNN() :
+               init == "maxmin" ? KMMaxMin() :
+               init == "scala"  ? KMScala(J, ϕ) :
+               error("wat")
+    elseif init == "pnns" && init0 == "self"
+        @assert rlevel == 0
+        return KMPNNSR(ρ)
+    else
+        @assert rlevel ≥ 1
+        kmseeder0 = init0 == "++"     ? KMPlusPlus{ncandidates}() :
+                    init0 == "unif"   ? KMUnif() :
+                    init0 == "pnn"    ? KMPNN() :
+                    init0 == "maxmin" ? KMMaxMin() :
+                    init0 == "scala"  ? KMScala(J, ϕ) :
+                    error("wat")
+
+        return init == "pnns"   ? KMPNNS(kmseeder0, ρ; rlevel) :
+               init == "refine" ? KMRefine(kmseeder0, J; rlevel) :
+               error("wut")
+    end
 end
 
 # Centroid Index
