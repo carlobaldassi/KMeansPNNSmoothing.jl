@@ -542,7 +542,7 @@ function recnninit(data::Matrix{Float64}, k::Int)
     end
 end
 
-function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_maxmin, ρ = 0.5)
+function init_centroid_metann(data::Matrix{Float64}, k::Int; init = init_centroid_pp1, ρ = 0.5)
     m, n = size(data)
     J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
     @assert J * k ≤ n
@@ -688,13 +688,13 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        init::Union{AbstractString,Matrix{Float64}} = "++",
+        init::Union{AbstractString,Matrix{Float64}} = "pnns",
         verbose::Bool = true,
         tol::Float64 = 1e-5,
         ncandidates::Union{Nothing,Int} = nothing,
         ρ::Float64 = 0.5,
         J::Int = 10,
-        rlevel::Int = 0,
+        rlevel::Int = 1,
         init0::AbstractString = "",
         rounds::Int = 5,
     )
@@ -704,11 +704,16 @@ function kmeans(
     if init isa AbstractString
         init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
         if init ∈ all_rec_methods
+            if init0 == ""
+                init0="++"
+                ncandidates ≡ nothing && (ncandidates = 1)
+            end
             if init0 ∈ all_basic_methods
                 rlevel ≤ 0 && (rlevel = 1)
             elseif init0 == "self"
                 init == "pnns" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
                 rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init and init0=$init0")
+                rlevel = 0
             else
                 throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
             end
