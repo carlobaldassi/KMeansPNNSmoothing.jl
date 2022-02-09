@@ -854,8 +854,8 @@ function init_centroid_refine(data::Matrix{Float64}, k::Int; init = init_centroi
     return mconfig
 end
 
-function init_centroid_para(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::Float64 = 2.0)
-    DataLogging.@push_prefix! "INIT_PARA"
+function init_centroid_scala(data::Matrix{Float64}, k::Int; rounds::Int = 5, ϕ::Float64 = 2.0)
+    DataLogging.@push_prefix! "INIT_SCALA"
     m, n = size(data)
     @assert n ≥ k
 
@@ -962,7 +962,7 @@ function kmeans(
         init0::AbstractString = "",
         rounds::Int = 5,
     )
-    all_basic_methods = ["++", "unif", "pnn", "maxmin", "hnn", "para"]
+    all_basic_methods = ["++", "unif", "pnn", "maxmin", "hnn", "scala"]
     all_rec_methods = ["refine", "smoothnn"]
     all_methods = [all_basic_methods; all_rec_methods]
     if init isa AbstractString
@@ -1016,8 +1016,8 @@ function kmeans(
                 config = init_centroid_maxmin(data, k)
             elseif init == "hnn"
                 config = init_centroid_hnn(data, k)
-            elseif init == "para"
-                config = init_centroid_para(data, k; rounds)
+            elseif init == "scala"
+                config = init_centroid_scala(data, k; rounds)
             else
                 error("wat")
             end
@@ -1045,8 +1045,8 @@ function kmeans(
                 innerinit = (data, k; kw...)->init_centroid_maxmin(data, k; kw...)
             elseif init0 == "hnn"
                 innerinit = (data, k; kw...)->init_centroid_hnn(data, k; kw...)
-            elseif init0 == "para"
-                innerinit = (data, k; kw...)->init_centroid_para(data, k; rounds, kw...)
+            elseif init0 == "scala"
+                innerinit = (data, k; kw...)->init_centroid_scala(data, k; rounds, kw...)
             else
                 error("wat")
             end
