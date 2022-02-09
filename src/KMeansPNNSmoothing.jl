@@ -761,17 +761,15 @@ function kmeans(
                 ncandidates ≡ nothing && (ncandidates = 1)
             end
             if init0 ∈ all_basic_methods
-                rlevel ≤ 0 && (rlevel = 1)
+                init == "pnns" && rlevel < 1 && throw(ArgumentError("when init=$init and init0=$init0 rlevel must be ≥ 1"))
             elseif init0 == "self"
                 init == "pnns" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
-                rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init and init0=$init0")
                 rlevel = 0
             else
                 throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
             end
         else
             init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
-            rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init")
         end
     end
 
