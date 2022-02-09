@@ -74,21 +74,21 @@ end
 
 
 @testset "kmeans PNNS(UNIF)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="unif", verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="unif", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="unif", rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="unif", rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="unif", rlevel=3, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="unif", rlevel=3, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -97,28 +97,28 @@ end
 end
 
 @testset "kmeans PNNS([G]KM++)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="++", ncandidates=1, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=1, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="++", ncandidates=1, rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=1, rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="++", ncandidates=nothing, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=nothing, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="++", ncandidates=nothing, rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="++", ncandidates=nothing, rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -127,14 +127,14 @@ end
 end
 
 @testset "kmeans PNNS(MAXMIN)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="maxmin", verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="maxmin", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="maxmin", rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="maxmin", rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -143,14 +143,14 @@ end
 end
 
 @testset "kmeans PNNS(SCALA)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="scala", verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="scala", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="scala", rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="scala", rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -159,7 +159,7 @@ end
 end
 
 @testset "kmeans PNNSR" begin
-    result = kmeans(a3, k, init="smoothnn", init0="self", verbose=false)
+    result = kmeans(a3, k, init="pnns", init0="self", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)

@@ -699,7 +699,7 @@ function kmeans(
         rounds::Int = 5,
     )
     all_basic_methods = ["++", "unif", "pnn", "maxmin", "scala"]
-    all_rec_methods = ["refine", "smoothnn"]
+    all_rec_methods = ["refine", "pnns"]
     all_methods = [all_basic_methods; all_rec_methods]
     if init isa AbstractString
         init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
@@ -707,7 +707,7 @@ function kmeans(
             if init0 ∈ all_basic_methods
                 rlevel ≤ 0 && (rlevel = 1)
             elseif init0 == "self"
-                init == "smoothnn" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
+                init == "pnns" || throw(ArgumentError("init0=$init0 unsupported with init=$init"))
                 rlevel == 0 || @warn("Ignoring rlevel=$rlevel with init=$init and init0=$init0")
             else
                 throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
@@ -743,7 +743,7 @@ function kmeans(
             else
                 error("wat")
             end
-        elseif init == "smoothnn" && init0 == "self"
+        elseif init == "pnns" && init0 == "self"
             @assert rlevel == 0
             config = init_centroid_metann(data, k; ρ, init=recnninit)
         else
@@ -751,7 +751,7 @@ function kmeans(
             local metainit::Function
             if init == "refine"
                 metainit = (data, k; kw...)->init_centroid_refine(data, k; J, kw...)
-            elseif init == "smoothnn"
+            elseif init == "pnns"
                 metainit = (data, k; kw...)->init_centroid_metann(data, k; ρ, kw...)
             else
                 error("wut")
