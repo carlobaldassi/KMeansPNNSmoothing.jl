@@ -151,7 +151,7 @@ end
 
 
 @testset "kmeans REFINE(UNIF)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="unif", verbose=false)
+    result = kmeans(a3, k, init="refine", init0="unif", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -160,7 +160,7 @@ end
 end
 
 @testset "kmeans REFINE(++)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="++", ncandidates=1, verbose=false)
+    result = kmeans(a3, k, init="refine", init0="++", ncandidates=1, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -169,7 +169,7 @@ end
 end
 
 @testset "kmeans REFINE(MAXMIN)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="maxmin", verbose=false)
+    result = kmeans(a3, k, init="refine", init0="maxmin", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -178,7 +178,7 @@ end
 end
 
 @testset "kmeans REFINE(SCALA)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="scala", verbose=false)
+    result = kmeans(a3, k, init="refine", init0="scala", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
