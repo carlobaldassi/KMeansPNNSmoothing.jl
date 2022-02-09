@@ -7,18 +7,17 @@ submitted for publication, (2022) [arXiv][pnns_paper].
 
 The code is written in [Julia]. It requires Julia 1.6 or later.
 
-It provides a multi-threaded implementation of Lloyd's algorithm, also known as k-means
-(the function is simply called `kmeans`) with several seeding options, controlled by the
-`init` keyword:
-* `"unif"`: sample centroids uniformly at random from the dataset, without replacement
-* `"++"`: [kmeans++][km++], including the "greedy" variant which is also used by
+It provides a multi-threaded implementation of Lloyd's algorithm, also known as k-means,
+with several seeding options:
+* sample centroids uniformly at random from the dataset, without replacement
+* [kmeans++][km++], including the "greedy" variant which is also used by
   [scikit-learn][sklearnkmeans]
-* `"maxmin"`: furthest-point heuristic from [this paper][maxmin]
-* `"scala"`: [kmeans‖][scalable] also called "scalable kmeans++"
-* `"pnn"`: [pairwise nearest-neighbor][PNN] hierarchical clustering (note: this scales more
+* furthest-point heuristic, also called "maxmin" from [this paper][maxmin]
+* [kmeans‖][scalable], also called "scalable kmeans++"
+* [pairwise nearest-neighbor][PNN] hierarchical clustering (note: this scales more
   than quadratically with the number of points)
-* `"pnns"`: the PNN-smoothing meta-method
-* `"refine"`: the [refine][refine] meta-method
+* the PNN-smoothing meta-method
+* the [refine][refine] meta-method
 
 The package also provides two functions to compute the centroid index as defined in [this paper][CI],
 an asymmetric one called `CI` and a symmetric one called `CI_sym`. These are not exported.
@@ -63,23 +62,27 @@ The format of the data must be a `Matrix{Float64}` with the data points organize
 example the `runfile.jl` script in the `test` directory.)
 
 Here is an example run, assuming we want to cluster a `data` matrix into `k` clusters with
-the original kmeans++ algorithm (the `ncandidates=1` option deactivates the "greedy" version)
+the original kmeans++ algorithm (the `{1}` type parameter deactivates the "greedy" version)
 ```julia
-result = kmeans(data, k; init="++", ncandidates=1)
+result = kmeans(data, k; kmseeder=KMPlusPlus{1}())
 ```
 and here is an example running the PNN-smoothing scheme, using the non-greedy kmeans++ to
 initialize the initial sub-sets (this is actually the default if no keyword arguments are
 passed):
 ```julia
-result = kmeans(data, k; init="pnns", init0="++", ncandidates=1)
+result = kmeans(data, k; kmseeder=KMPNNS(KMPlusPlus{1}()))
+```
+and here is again PNN-smoothing but this time using "maxmin" at 2 levels of recursion:
+```julia
+result = kmeans(data, k; kmseeder=KMPNNS(KMMaxMin(), rlevel=2))
 ```
 
 For the complete documentation you can use the Julia help (press the <kbd>?</kbd> key in
-the REPL and type `kmeans`)
+the REPL, then type `kmeans`, or `KMeansSeeder`)
 
-Both the seeding procedures and the Lloyd's algorithm parts will run in parallel (over the
-data points) if there are threads available: either run Julia with the `-t` option or use
-the `JULIA_NUM_THREADS` environment variable.
+All codes are parallellized (in most cases over the data points) if there are threads
+available: either run Julia with the `-t` option or use the `JULIA_NUM_THREADS` environment
+variable.
 
 ## Licence
 
