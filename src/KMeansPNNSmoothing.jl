@@ -228,33 +228,104 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
     return true
 end
 
+"""
+A `KMeansSeeder` object is used to specify the seeding algorithm.
+Currently the following basic objects are defined:
+
+* `KMUnif`: sample centroids uniformly at random from the dataset, without replacement
+* `KMPlusPlus`: kmeans++ by Arthur and Vassilvitskii (2006)
+* `KMMaxMin`: furthest-point heuristic, by Katsavounidis et al. (1994)
+* `KMScala`: kmeans‖ also called "scalable kmeans++", by Bahmani et al. (2012)
+* `KMPNN`: pairwise nearest-neighbor hierarchical clustering, by Equitz (1989)
+
+There are also meta-methods, whose parent type is `KMMetaSeeder`, 
+
+* `KMPNNS`: the PNN-smoothing meta-method
+* `KMRefine`: the refine meta-method by Bradely and Fayyad (1998)
+
+For each of these object, there is a corresponding implementation of
+`init_centroids(::KMeansSeeder, data, k)`, which concretely performs the initialization.
+
+The documentation of each method explains the arguments that can be passed to
+control the initialization process.
+"""
 abstract type KMeansSeeder end
 
+"""
+    KMUnif()
+
+The most basic `KMeansSeeder`: sample centroids uniformly at random from the
+dataset, without replacement.
+"""
 struct KMUnif <: KMeansSeeder
 end
 
+"""
+    KMPlusPlus()
+    KMPlusPlus{NC}()
+
+A `KMeansSeeder` that uses kmeans++. The parameter `NC` determines the number of
+candidates for the "greedy" version of the algorithm. By default, it is `nothing`,
+meaning that it will use the value `log(2+k)`. Otherwise it must be an integer.
+The value `1` corresponds to the original (non-greedy) algorithm, which has a
+specialized implementation.
+"""
 struct KMPlusPlus{NC} <: KMeansSeeder
 end
 
 KMPlusPlus() = KMPlusPlus{nothing}()
 
+
+"""
+    KMMaxMin()
+
+A `KMeansSeeder` for the furthest-point heuristic, also called maxmin.
+"""
 struct KMMaxMin <: KMeansSeeder
 end
 
+"""
+    KMScala(rounds=5, ϕ=2.0)
+
+A `KMeansSeeder` for "scalable kmeans++" or kmeans‖. The `rounds` option
+determines the number of sampling rounds; the `ϕ` option determines the
+oversampling factor, which is then computed as `ϕ * k`.
+"""
 struct KMScala <: KMeansSeeder
     rounds::Int
     ϕ::Float64
-    KMScala(rounds::Int = 5, ϕ::Float64 = 2.0) = new(rounds, ϕ)
+    KMScala(rounds = 5, ϕ = 2.0) = new(rounds, ϕ)
 end
 
+"""
+    KMPNN()
+
+A `KMeansSeeder` for the pairwise nearest-neighbor hierarchical clustering
+method. Note that this scales somewhere between the square and the cube of the number
+of points in the dataset.
+"""
 struct KMPNN <: KMeansSeeder
 end
 
+"""
+A `KMMetaSeeder{S0<:KMeansSeeder}` object is a sub-type of `KMeansSeeder` representing a meta-method,
+using an object of type `S0` as an internal seeder.
+"""
 abstract type KMMetaSeeder{S0<:KMeansSeeder} <: KMeansSeeder end
 
 struct _KMSelf <: KMeansSeeder
 end
 
+"""
+    KMPNNS(init0=KMPlusPlus{1}(), ρ=0.5, rlevel=1)
+
+A `KMMetaSeeder` to use the PNN-smoothing algorithm. The inner method `init0` can be any
+`KMeansSeeder`. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
+where ``N`` is the number of data points and ``k`` the number of clusters, but the result is
+clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level.
+
+See `KMPNNSR` for the fully-recursive version.
+"""
 struct KMPNNS{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     ρ::Float64
@@ -269,8 +340,22 @@ function KMPNNS(init0::S = KMPlusPlus{1}(), ρ = 0.5; rlevel::Int = 1) where {S 
 end
 
 const KMPNNSR = KMPNNS{_KMSelf}
+
+"""
+    KMPNNSR(ρ=0.5)
+
+The fully-recursive version of the `KMPNNS` seeder. It keeps splitting the dataset until the
+number of points is ``≤2k``, at which point it uses `KMPNN`. The `ρ` option is documented in `KMPNNS`.
+"""
 KMPNNSR(ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
 
+"""
+    KMRefine(init0=KMPlusPlus{1}(), J=10, rlevel=1)
+
+A `KMMetaSeeder` to use the "refine" algorithm. The inner method `init0` can be any
+`KMeansSeeder`. The argument `J` sets the number of sub-sets. The argument `rlevel` sets the
+recursion level.
+"""
 struct KMRefine{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     J::Int
@@ -890,51 +975,26 @@ Results(exit_status, config::Configuration) = Results(exit_status, config.c, con
 
 Runs k-means using Lloyd's algorithm on the given data matrix (if the size is `d`×`n` then `d` is
 the dimension and `n` the number of points, i.e. data is organized by column).
-It returns: 1) a vector of labels (`n` integers from 1 to `k`); 2) a `d`×`k` matrix of centroids;
-3) the final cost; 4) whether it converged or not
 
 It returns an object of type `Results`, which contains the following fields:
-* exit_status: a symbol that indicates the reason why the algorithm stopped. It can take three
-  values, `:collapsed`, `:maxgenerations` or `:noimprovement`.
+* exit_status: a symbol that indicates the reason why the algorithm stopped. It can take two
+  values, `:converged` or `:maxiters`.
 * labels: a vector of labels (`n` integers from 1 to `k`)
 * centroids: a `d`×`k` matrix of centroids
 * cost: the final cost
 
-The keyword arguments controlling the Lloyd's algorithm are:
+The keyword arguments are:
 
 * `max_it`: maximum number of iterations (default=1000). Normally the algorithm stops at fixed
   points.
 * `seed`: random seed, either an integer or `nothing` (this is the default, it means no seeding
   is performed).
-* `init`: how to initialize (default=`"pnns"`). It can be a string or a `Matrix{Float64}`. If it's
-  a matrix, it represents the initial centroids (by column). If it is a string, it can be one of the
-  init algorithms described below.
+* `kmseeder`: seeder for the initial configuration (default=`KMPNNS()`). It can be a `KMeansSeeder`
+  or a `Matrix{Float64}`. If it's a matrix, it represents the initial centroids (by column).
+  See the documentation for `KMeansSeeder` for a list of available seeding algorithms and their
+  options.
 * `tol`: a `Float64`, relative tolerance for detecting convergence (default=1e-5).
 * `verbose`: a `Bool`; if `true` (the default) it prints information on screen.
-
-The possible `init` methods are:
-
-* `"unif"`: sample centroids uniformly at random from the dataset, without replacement
-* `"++"`: kmeans++ by Arthur and Vassilvitskii (2006)
-* `"maxmin"`: furthest-point heuristic, by Katsavounidis et al. (1994)
-* `"scala"`: kmeans‖ also called "scalable kmeans++", by Bahmani et al. (2012)
-* `"pnn"`: pairwise nearest-neighbor hierarchical clustering, by Equitz (1989)
-* `"pnns"`: the PNN-smoothing meta-method
-* `"refine"`: the refine meta-method by Bradely and Fayyad (1998)
-
-The keyword arguments related to the `init` methods are:
-
-* `init0`: the sub-initialization method to be used when `init="pnns"` or `init="refine"`; the
-  argument can be any of the other methods listed above, or `"self"` for the fully-recursive
-  version of `"pnns"`. If left empty (the default), then `"++"` with `ncandidates=1` will be used.
-* `ρ`: a `Float64`, sets the number of sub-sets when `init="pnns"`. By default it is `0.5`.
-  The formula is ``⌈√(ρ N / k)⌉`` where ``N`` is the number of data points and ``k`` the number of
-  clusters, but the result is clamped between `1` and `N÷k`.
-* `J`: the number of sub-sets when `init="refine"`. By default it is `10`. Note that you must ensure
-  that ``J k ≤ N``.
-* `ncandidates`: if init=="++" or init0="++", set the number of candidates for k-means++ (the default is
-  `nothing`, which means that it is set automatically to `log(2+k)`)
-* `rounds`: the number of rounds when `init="scala"` or `init0="scala"`.
 """
 function kmeans(
         data::Matrix{Float64}, k::Integer;
