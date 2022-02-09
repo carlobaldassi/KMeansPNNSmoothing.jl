@@ -64,7 +64,7 @@ end
 end
 
 @testset "kmeans||" begin
-    result = kmeans(a3, k, init="para", verbose=false)
+    result = kmeans(a3, k, init="scala", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -142,15 +142,15 @@ end
     @test result.exit_status == :converged
 end
 
-@testset "kmeans PNNS(PARA)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="para", verbose=false)
+@testset "kmeans PNNS(SCALA)" begin
+    result = kmeans(a3, k, init="smoothnn", init0="scala", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
     @test 6.7 < result.cost < 11
     @test result.exit_status == :converged
 
-    result = kmeans(a3, k, init="smoothnn", init0="para", rlevel=2, verbose=false)
+    result = kmeans(a3, k, init="smoothnn", init0="scala", rlevel=2, verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
@@ -196,8 +196,8 @@ end
     @test result.exit_status == :converged
 end
 
-@testset "kmeans REFINE(PARA)" begin
-    result = kmeans(a3, k, init="smoothnn", init0="para", verbose=false)
+@testset "kmeans REFINE(SCALA)" begin
+    result = kmeans(a3, k, init="smoothnn", init0="scala", verbose=false)
     @test length(result.labels) == m
     @test all(∈(1:k), result.labels)
     @test size(result.centroids) == (2,k)
