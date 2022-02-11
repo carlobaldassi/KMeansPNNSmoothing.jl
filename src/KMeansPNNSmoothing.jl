@@ -10,8 +10,10 @@ using ExtractMacro
 include("DataLogging.jl")
 using .DataLogging
 
-export kmeans
-
+export kmeans,
+       KMeansSeeder, KMMetaSeeder,
+       KMUnif, KMMaxMin, KMScala, KMPlusPlus, KMPNN,
+       KMPNNS, KMPNNSR, KMRefine
 
 mutable struct Configuration
     m::Int
