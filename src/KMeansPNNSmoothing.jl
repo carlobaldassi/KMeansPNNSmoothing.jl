@@ -7,8 +7,10 @@ using Statistics
 using StatsBase
 using ExtractMacro
 
-export kmeans
-
+export kmeans,
+       KMeansSeeder, KMMetaSeeder,
+       KMUnif, KMMaxMin, KMScala, KMPlusPlus, KMPNN,
+       KMPNNS, KMPNNSR, KMRefine
 
 mutable struct Configuration
     m::Int
