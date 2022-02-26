@@ -287,7 +287,7 @@ struct KMMaxMin <: KMeansSeeder
 end
 
 """
-    KMScala(rounds=5, ϕ=2.0)
+    KMScala(;rounds=5, ϕ=2.0)
 
 A `KMeansSeeder` for "scalable kmeans++" or kmeans‖. The `rounds` option
 determines the number of sampling rounds; the `ϕ` option determines the
@@ -296,7 +296,7 @@ oversampling factor, which is then computed as `ϕ * k`.
 struct KMScala <: KMeansSeeder
     rounds::Int
     ϕ::Float64
-    KMScala(rounds = 5, ϕ = 2.0) = new(rounds, ϕ)
+    KMScala(;rounds = 5, ϕ = 2.0) = new(rounds, ϕ)
 end
 
 """
@@ -319,7 +319,7 @@ struct _KMSelf <: KMeansSeeder
 end
 
 """
-    KMPNNS(init0=KMPlusPlus{1}(), ρ=0.5, rlevel=1)
+    KMPNNS(init0=KMPlusPlus{1}(); ρ=0.5, rlevel=1)
 
 A `KMMetaSeeder` to use the PNN-smoothing algorithm. The inner method `init0` can be any
 `KMeansSeeder`. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
@@ -332,7 +332,7 @@ struct KMPNNS{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     ρ::Float64
 end
-function KMPNNS(init0::S = KMPlusPlus{1}(), ρ = 0.5; rlevel::Int = 1) where {S <: KMeansSeeder}
+function KMPNNS(init0::S = KMPlusPlus{1}(); ρ = 0.5, rlevel::Int = 1) where {S <: KMeansSeeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
@@ -344,15 +344,15 @@ end
 const KMPNNSR = KMPNNS{_KMSelf}
 
 """
-    KMPNNSR(ρ=0.5)
+    KMPNNSR(;ρ=0.5)
 
 The fully-recursive version of the `KMPNNS` seeder. It keeps splitting the dataset until the
 number of points is ``≤2k``, at which point it uses `KMPNN`. The `ρ` option is documented in `KMPNNS`.
 """
-KMPNNSR(ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
+KMPNNSR(;ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
 
 """
-    KMRefine(init0=KMPlusPlus{1}(), J=10, rlevel=1)
+    KMRefine(init0=KMPlusPlus{1}(); J=10, rlevel=1)
 
 A `KMMetaSeeder` to use the "refine" algorithm. The inner method `init0` can be any
 `KMeansSeeder`. The argument `J` sets the number of sub-sets. The argument `rlevel` sets the
@@ -362,7 +362,7 @@ struct KMRefine{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     J::Int
 end
-function KMRefine(init0::S = KMPlusPlus{1}(), J = 10; rlevel::Int = 1) where {S <: KMeansSeeder}
+function KMRefine(init0::S = KMPlusPlus{1}(); J = 10, rlevel::Int = 1) where {S <: KMeansSeeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
