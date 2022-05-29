@@ -878,7 +878,6 @@ function kmeans(
         kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
         verbose::Bool = true,
         tol::Float64 = 1e-5,
-        init0::AbstractString = "",
     )
 
     if seed ≢ nothing
