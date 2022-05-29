@@ -1006,7 +1006,6 @@ function kmeans(
         verbose::Bool = true,
         tol::Float64 = 1e-5,
         logfile::AbstractString = "",
-        init0::AbstractString = "",
     )
 
     logger = if !isempty(logfile)
