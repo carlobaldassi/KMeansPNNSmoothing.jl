@@ -377,7 +377,7 @@ end
 
 
 
-function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int; kw...)
+function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int)
     DataLogging.@push_prefix! "INIT_UNIF"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
@@ -423,7 +423,7 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
 end
 compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
-init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int; kw...) =
+init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int) =
     init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k)
 
 function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int; w = nothing) where NC
