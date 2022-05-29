@@ -6,6 +6,7 @@ using Random
 using Statistics
 using StatsBase
 using ExtractMacro
+using DataStructures
 
 include("DataLogging.jl")
 using .DataLogging
@@ -97,7 +98,7 @@ Base.@propagate_inbounds function _cost(d1, d2)
 end
 
 
-function partition_from_centroids!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+function partition_from_centroids!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing; force_full::Bool = false)
     @extract config: m k n c costs centroids active nonempty csizes
     @assert size(data) == (m, n)
 
@@ -123,6 +124,7 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
             else
                 fullsearch = (ci == 0)
             end
+            fullsearch |= force_full
             num_fullsearch_th[Threads.threadid()] += fullsearch
 
             v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
@@ -963,6 +965,189 @@ function lloyd!(
     return converged
 end
 
+function beyond!(
+        config::Configuration,
+        data::Matrix{Float64},
+        max_it::Int,
+        tol::Float64,
+        verbose::Bool,
+        w::Union{Vector{<:Real},Nothing} = nothing;
+    )
+    @assert w ≡ nothing # TODO actually support w?
+    @extract config: m k n c costs centroids active nonempty csizes
+    @assert size(data) == (m, n)
+    DataLogging.@push_prefix! "BEYOND"
+    DataLogging.@log "INPUTS max_it: $max_it tol: $tol"
+    cost0 = config.cost
+    converged = false
+    fixedpoint = false
+    t = @elapsed begin
+        centroids_from_partition!(config, data, w)
+        found_empty = check_empty!(config, data)
+        for i = 1:n
+            wi = w ≡ nothing ? 1 : w[i]
+            @views costs[i] = wi * _cost(data[:,i], centroids[:,c[i]])
+        end
+        config.cost = sum(costs)
+
+        candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
+        sizehint!(candidates, n)
+        rollback = Tuple{Int,Int,Int}[]
+        sizehint!(rollback, n)
+
+        affected_points = falses(n)
+        affected_clusters = falses(k)
+        affected_clusters_prev = trues(k)
+
+        safe_mode = false
+        it = 0
+        @inbounds while it < max_it
+            empty!(candidates)
+            it += 1
+            allinds = collect(1:k)
+            affected_inds = findall(affected_clusters_prev)
+            for i = 1:n
+                ci = c[i]
+                wi = w ≡ nothing ? 1 : w[i]
+                inds = affected_clusters_prev[ci] ? allinds : affected_inds
+                for ci′ = inds
+                    ci′ == ci && continue
+                    v = costs[i]
+                    # @assert v ≈ _cost(data[:,i], centroids[:,ci])
+                    @views v′ = wi * _cost(data[:,i], centroids[:,ci′])
+                    z = csizes[ci]
+                    z ≤ 1 && continue
+                    z′ = csizes[ci′]
+                    Δ = z / (z - 1) * v
+                    Δ′ = z′ / (z′ + 1) * v′
+                    Δcost = Δ′ - Δ
+                    if Δcost < 0
+                        # @info "i=$i ci=$ci->$ci′ Δcost exp. = $Δcost"
+                        push!(candidates, (Δcost, i, ci, ci′))
+                    end
+                end
+            end
+
+            if length(candidates) == 0
+                # old_cost = config.cost
+                # partition_from_centroids!(config, data; force_full=true)
+                verbose && println("fixed point cost = $(config.cost)")
+                # @assert config.cost ≤ old_cost + 1e-10
+                converged = true
+                fixedpoint = true
+                break
+            end
+            affected_points .= false
+            affected_clusters .= false
+            np = 0
+            nc = 0
+
+            empty!(rollback)
+
+            old_cost = config.cost
+            safe = true
+            while length(candidates) > 0 && np < n && (!safe_mode || nc < k)
+                (Δcost, i, ci, ci′) = pop!(candidates)
+                affected_points[i] && continue
+                if (affected_clusters[ci] || affected_clusters[ci′])
+                    if safe_mode
+                        continue
+                    else
+                        safe = false
+                    end
+                end
+                z = csizes[ci]
+                z′ = csizes[ci′]
+                @assert (!safe_mode || z > 1)
+                z ≤ 1 && continue
+
+                push!(rollback, (i, ci, ci′))
+
+                np += 1
+                affected_points[i] = true
+                nc += !affected_clusters[ci] + !affected_clusters[ci′]
+                affected_clusters[ci] = true
+                affected_clusters[ci′] = true
+                y = @view centroids[:,ci]
+                y′ = @view centroids[:,ci′]
+                x = @view data[:,i]
+
+                csizes[ci] -= 1
+                c[i] = ci′
+                csizes[ci′] += 1
+                centroids[:,ci] .= (z .* y .- x) ./ (z - 1)
+                centroids[:,ci′] .= (z′ .* y′ .+ x) ./ (z′ + 1)
+                nonempty[ci′] = true
+
+                # config.cost += Δcost
+            end
+            for i = 1:n
+                j = c[i]
+                if affected_clusters[j]
+                    @assert nonempty[j]
+                    wi = w ≡ nothing ? 1 : w[i]
+                    @views costs[i] = wi * _cost(data[:,i], centroids[:,j])
+                end
+            end
+            config.cost = sum(costs)
+            @assert !safe || config.cost ≤ old_cost + 1e-10
+            if config.cost > old_cost
+                @assert length(rollback) == np length(rollback),np
+                DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: true sm: $safe_mode s: $safe)"
+                verbose && println("beyond it = $it cost = $(config.cost) [np=$np] unsafe mode failed!")
+                for (i, ci, ci′) in Iterators.reverse(rollback)
+                    y = @view centroids[:,ci]
+                    y′ = @view centroids[:,ci′]
+                    x = @view data[:,i]
+
+                    csizes[ci] += 1
+                    c[i] = ci
+                    csizes[ci′] -= 1
+                    z = csizes[ci]
+                    z′ = csizes[ci′]
+                    centroids[:,ci] .= ((z - 1) .* y .+ x) ./ z
+                    centroids[:,ci′] .= ((z′ + 1) .* y′ .- x) ./ z′
+                    nonempty[ci′] = csizes[ci′] > 0
+                end
+                for i = 1:n
+                    j = c[i]
+                    if affected_clusters[j]
+                        @assert nonempty[j]
+                        wi = w ≡ nothing ? 1 : w[i]
+                        @views costs[i] = wi * _cost(data[:,i], centroids[:,j])
+                    end
+                end
+                config.cost = sum(costs)
+                @assert config.cost ≈ old_cost
+                safe_mode = true
+            else
+                DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: false sm: $safe_mode s: $safe)"
+                verbose && println("beyond it = $it cost = $(config.cost) [np=$np]" * (safe_mode ? " safe mode" : safe ? " safe" : ""))
+                safe_mode = false
+                affected_clusters_prev .= affected_clusters
+                if config.cost ≥ old_cost * (1 - tol)
+                    verbose && println("converged cost = $(config.cost)")
+                    converged = true
+                    break
+                end
+            end
+        end
+
+    end
+    if !fixedpoint
+        partition_from_centroids!(config, data; force_full=true)
+    # else
+    #     old_cost = config.cost
+    #     partition_from_centroids!(config, data; force_full=true)
+    #     # @info "MSB FINAL COST: $(config.cost)"
+    #     @assert config.cost ≈ old_cost
+    end
+
+    DataLogging.@log "DONE time: $t iters: $it converged: $converged fixedpoint: $fixedpoint cost0: $cost0 cost1: $(config.cost)"
+    DataLogging.@pop_prefix!
+    return converged
+end
+
 struct Results
     exit_status::Symbol
     labels::Vector{Int}
@@ -1047,6 +1232,60 @@ function kmeans(
     logger ≢ nothing && pop_logger!()
 
     exit_status = converged ? :converged : :maxiters
+
+    return Results(exit_status, config)
+end
+
+function beyond_kmeans(
+        data::Matrix{Float64}, k::Integer;
+        max_it::Integer = 1000,
+        seed::Union{Integer,Nothing} = nothing,
+        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
+        verbose::Bool = true,
+        tol::Float64 = 1e-5,
+        logfile::AbstractString = "",
+    )
+
+    logger = if !isempty(logfile)
+        if DataLogging.logging_on
+            init_logger(logfile, "w")
+        else
+            @warn "logging is off, ignoring logfile"
+            nothing
+        end
+    end
+
+    DataLogging.@push_prefix! "BEYOND_KMEANS"
+
+    if seed ≢ nothing
+        Random.seed!(seed)
+        if VERSION < v"1.7-"
+            Threads.@threads for h = 1:Threads.nthreads()
+                Random.seed!(seed + h)
+            end
+        end
+    end
+    m, n = size(data)
+    DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
+
+    if kmseeder isa KMeansSeeder
+        config = init_centroids(kmseeder, data, k)
+    else
+        centroids = kmseeder
+        size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
+        config = Configuration(data, centroids)
+    end
+
+    verbose && println("initial cost = $(config.cost)")
+    DataLogging.@log "INIT_COST" config.cost
+    converged = beyond!(config, data, max_it, tol, verbose)
+    DataLogging.@log "FINAL_COST" config.cost
+
+    DataLogging.@pop_prefix!
+    logger ≢ nothing && pop_logger!()
+
+    # exit_status = converged ? :converged : :maxiters
+    exit_status = :converged
 
     return Results(exit_status, config)
 end
