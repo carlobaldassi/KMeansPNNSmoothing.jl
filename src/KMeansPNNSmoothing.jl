@@ -905,6 +905,8 @@ function kmeans(
 
     exit_status = converged ? :converged : :maxiters
 
+    clear_cache!()
+
     return Results(exit_status, config)
 end
 
