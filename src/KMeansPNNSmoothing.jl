@@ -1284,8 +1284,7 @@ function beyond_kmeans(
     DataLogging.@pop_prefix!
     logger ≢ nothing && pop_logger!()
 
-    # exit_status = converged ? :converged : :maxiters
-    exit_status = :converged
+    exit_status = converged ? :converged : :maxiters
 
     return Results(exit_status, config)
 end
