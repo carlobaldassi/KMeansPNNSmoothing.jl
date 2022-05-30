@@ -6,7 +6,6 @@ using Random
 using Statistics
 using StatsBase
 using ExtractMacro
-using DataStructures
 
 include("DataLogging.jl")
 using .DataLogging
@@ -985,13 +984,6 @@ function lloyd!(
     return converged
 end
 
-### TODO: add to DataStrcutures
-function Base.copy!(dest::BinaryHeap{T,O}, src::BinaryHeap{T,O}) where {T,O}
-    resize!(dest.valtree, length(src.valtree))
-    copy!(dest.valtree, src.valtree)
-    return dest
-end
-
 function beyond!(
         config::Configuration,
         data::Matrix{Float64},
@@ -1018,13 +1010,15 @@ function beyond!(
         end
         config.cost = sum(costs)
 
-        candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
+        candidates = Tuple{Float64,Int,Int,Int}[]
         sizehint!(candidates, n)
-        bk_candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
+        bk_candidates = Tuple{Float64,Int,Int,Int}[]
         sizehint!(bk_candidates, n)
         rollback = Tuple{Int,Int,Int}[]
         sizehint!(rollback, n)
         leftovers = falses(n)
+        dfact = zeros(k)
+        afact = zeros(k)
 
         affected_points = falses(n)
         affected_clusters = falses(k)
@@ -1041,6 +1035,12 @@ function beyond!(
                 copy!(candidates, bk_candidates)
             else
                 @assert isempty(candidates)
+                # pre-compute the factors to gain a little speed
+                for j = 1:k
+                    z = csizes[j]
+                    dfact[j] = z / (z - 1)
+                    afact[j] = z / (z + 1)
+                end
                 active_inds = findall(active)
                 for i = 1:n
                     ci = c[i]
@@ -1051,7 +1051,7 @@ function beyond!(
                     end
                     if active[ci]
                         old_Δ = dcosts[i]
-                        Δ = z / (z - 1) * costs[i]
+                        Δ = dfact[ci] * costs[i]
                         dcosts[i] = Δ
                         fullsearch = (Δ > old_Δ) | leftovers[i]
                     else
@@ -1060,12 +1060,12 @@ function beyond!(
                     end
                     wi = w ≡ nothing ? 1 : w[i]
                     inds = fullsearch ? all_inds : active_inds
+                    datai = @view(data[:,i])
                     for ci′ in inds
                         ci′ == ci && continue
-                        # @assert v ≈ _cost(data[:,i], centroids[:,ci])
-                        @views v′ = wi * _cost(data[:,i], centroids[:,ci′])
-                        z′ = csizes[ci′]
-                        Δ′ = z′ / (z′ + 1) * v′
+                        # @assert v ≈ _cost(datai, centroids[:,ci])
+                        @views v′ = wi * _cost(datai, centroids[:,ci′])
+                        Δ′ = afact[ci′] * v′
                         Δcost = Δ′ - Δ
                         if Δcost < 0
                             # @info "i=$i ci=$ci->$ci′ Δcost exp. = $Δcost"
@@ -1074,16 +1074,17 @@ function beyond!(
                     end
                 end
 
-                if length(candidates) == 0
+                if isempty(candidates)
                     # old_cost = config.cost
                     # partition_from_centroids!(config, data; force_full=true)
                     verbose && println("fixed point cost = $(config.cost)")
-                    # @assert config.cost ≤ old_cost + 1e-10
+                    # @assert config.cost ≤ old_cost * (1 + 1e-10)
                     converged = true
                     fixedpoint = true
                     break
                 end
 
+                sort!(candidates)
                 copy!(bk_candidates, candidates)
             end
 
@@ -1097,8 +1098,10 @@ function beyond!(
 
             old_cost = config.cost
             safe = true
-            while length(candidates) > 0 && np < n && (!safe_mode || nc < k)
-                (Δcost, i, ci, ci′) = pop!(candidates)
+            key = 0
+            while key < length(candidates) && np < n && (!safe_mode || nc < k)
+                key += 1
+                Δcost, i, ci, ci′ = candidates[key]
                 if affected_points[i]
                     leftovers[i] = true
                     continue
@@ -1139,10 +1142,12 @@ function beyond!(
 
                 # config.cost += Δcost
             end
-            while length(candidates) > 0
-                (Δcost, i, ci, ci′) = pop!(candidates)
+            while key < length(candidates)
+                key += 1
+                Δcost, i, ci, ci′ = candidates[key]
                 leftovers[i] = true
             end
+            empty!(candidates)
 
             for i = 1:n
                 j = c[i]
@@ -1153,8 +1158,8 @@ function beyond!(
                 end
             end
             config.cost = sum(costs)
-            @assert !safe || config.cost ≤ old_cost + 1e-10
-            if config.cost > old_cost + 1e-10
+            @assert !safe || config.cost ≤ old_cost * (1 + 1e-10)
+            if config.cost > old_cost * (1 + 1e-10)
                 ## rollback
                 @assert length(rollback) == np length(rollback),np
                 DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: true sm: $safe_mode s: $safe)"
