@@ -119,14 +119,15 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
         @inbounds begin
             ci = c[i]
             wi = w ≡ nothing ? 1 : w[i]
-            if ci > 0 && active[ci]
+            if force_full
+                fullsearch = true
+            elseif ci > 0 && active[ci]
                 old_v′ = costs[i]
                 @views new_v′ = wi * _cost(data[:,i], centroids[:,ci])
                 fullsearch = (new_v′ > old_v′)
             else
                 fullsearch = (ci == 0)
             end
-            fullsearch |= force_full
             num_fullsearch_th[Threads.threadid()] += fullsearch
 
             v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
