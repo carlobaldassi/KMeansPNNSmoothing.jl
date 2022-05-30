@@ -321,24 +321,27 @@ struct _KMSelf <: KMeansSeeder
 end
 
 """
-    KMPNNS(init0=KMPlusPlus{1}(); ρ=0.5, rlevel=1)
+    KMPNNS(init0=KMPlusPlus{1}(); ρ=0.5, rlevel=1, algo=:auto)
 
 A `KMMetaSeeder` to use the PNN-smoothing algorithm. The inner method `init0` can be any
 `KMeansSeeder`. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
 where ``N`` is the number of data points and ``k`` the number of clusters, but the result is
-clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level.
+clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level. The `algo` argument
+sets the optimization method, either `:auto`, `:lloyd` or `:beyond`.
 
 See `KMPNNSR` for the fully-recursive version.
 """
 struct KMPNNS{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     ρ::Float64
+    algo::Symbol
 end
-function KMPNNS(init0::S = KMPlusPlus{1}(); ρ = 0.5, rlevel::Int = 1) where {S <: KMeansSeeder}
+function KMPNNS(init0::S = KMPlusPlus{1}(); ρ = 0.5, rlevel::Int = 1, algo::Symbol = :auto) where {S <: KMeansSeeder}
     @assert rlevel ≥ 1
+    @assert algo ∈ [:auto, :lloyd, :beyond]
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = KMPNNS{typeof(kmseeder)}(kmseeder, ρ)
+        kmseeder = KMPNNS{typeof(kmseeder)}(kmseeder, ρ, algo)
     end
     return kmseeder
 end
@@ -346,29 +349,35 @@ end
 const KMPNNSR = KMPNNS{_KMSelf}
 
 """
-    KMPNNSR(;ρ=0.5)
+    KMPNNSR(;ρ=0.5, algo=:lloyd)
 
 The fully-recursive version of the `KMPNNS` seeder. It keeps splitting the dataset until the
-number of points is ``≤2k``, at which point it uses `KMPNN`. The `ρ` option is documented in `KMPNNS`.
+number of points is ``≤2k``, at which point it uses `KMPNN`. The `ρ` and `algo` options are
+documented in `KMPNNS`.
 """
-KMPNNSR(;ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
+function KMPNNSR(;ρ = 0.5, algo::Symbol = :auto)
+    @assert algo ∈ [:auto, :lloyd, :beyond]
+    KMPNNS{_KMSelf}(_KMSelf(), ρ, algo)
+end
 
 """
-    KMRefine(init0=KMPlusPlus{1}(); J=10, rlevel=1)
+    KMRefine(init0=KMPlusPlus{1}(); J=10, rlevel=1, algo=:lloyd)
 
 A `KMMetaSeeder` to use the "refine" algorithm. The inner method `init0` can be any
 `KMeansSeeder`. The argument `J` sets the number of sub-sets. The argument `rlevel` sets the
-recursion level.
+recursion level. The `algo` argument set the optimization method, either `:lloyd` or `:beyond`
 """
 struct KMRefine{S<:KMeansSeeder} <: KMMetaSeeder{S}
     init0::S
     J::Int
+    algo::Symbol
 end
-function KMRefine(init0::S = KMPlusPlus{1}(); J = 10, rlevel::Int = 1) where {S <: KMeansSeeder}
+function KMRefine(init0::S = KMPlusPlus{1}(); J = 10, rlevel::Int = 1, algo::Symbol = :auto) where {S <: KMeansSeeder}
     @assert rlevel ≥ 1
+    @assert algo ∈ [:auto, :lloyd, :beyond]
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = KMRefine{typeof(kmseeder)}(kmseeder, J)
+        kmseeder = KMRefine{typeof(kmseeder)}(kmseeder, J, algo)
     end
     return kmseeder
 end
@@ -377,7 +386,7 @@ end
 
 
 
-function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int)
+function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int; kw...)
     DataLogging.@push_prefix! "INIT_UNIF"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
@@ -423,10 +432,10 @@ function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float
 end
 compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
-init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int) =
-    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k)
+init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int; kw...) =
+    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k; kw...)
 
-function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int; w = nothing) where NC
+function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int; w = nothing, kw...) where NC
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k
@@ -532,7 +541,7 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
     return costs
 end
 
-function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int; w = nothing)
+function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int; w = nothing, kw...)
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k
@@ -568,7 +577,7 @@ function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int; w = noth
     return config
 end
 
-function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int)
+function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int; kw...)
     DataLogging.@push_prefix! "INIT_MAXMIN"
     m, n = size(data)
     @assert n ≥ k
@@ -750,19 +759,23 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
 end
 
 
-function inner_init(S::KMPNNSR, data::Matrix{Float64}, k::Int)
+function inner_init(S::KMPNNSR, data::Matrix{Float64}, k::Int; kw...)
     m, n = size(data)
     if n ≤ 2k
-        return init_centroids(KMPNN(), data, k)
+        return init_centroids(KMPNN(), data, k; kw...)
     else
-        return init_centroids(S, data, k)
+        return init_centroids(S, data, k; kw...)
     end
 end
 
-inner_init(S::KMMetaSeeder{S0}, data::Matrix{Float64}, k::Int) where S0 = init_centroids(S.init0, data, k)
+inner_init(S::KMMetaSeeder{S0}, data::Matrix{Float64}, k::Int; kw...) where S0 = init_centroids(S.init0, data, k; kw...)
 
-function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
-    @extract S : ρ
+function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int; default_algo::Symbol = :lloyd, kw...) where S0
+    @extract S : ρ algo
+    opt_algo! = algo == :auto ? (default_algo == :lloyd ? lloyd! : beyond!) :
+                algo == :lloyd ? lloyd! :
+                algo == :beyond ? beyond! :
+                error("invalid algo")
     DataLogging.@push_prefix! "INIT_METANN"
     m, n = size(data)
     J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
@@ -779,7 +792,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = inner_init(S, rdata, k)
-                lloyd!(config, rdata, 1_000, 1e-4, false)
+                opt_algo!(config, rdata, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end
@@ -811,7 +824,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
     return mconfig
 end
 
-function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int)
+function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int; kw...)
     DataLogging.@push_prefix! "INIT_PNN"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
@@ -830,8 +843,12 @@ function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int)
     return config
 end
 
-function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
-    @extract S : J
+function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int; kw...) where S0
+    @extract S : J algo
+    opt_algo! = algo == :auto ? (default_algo == :lloyd ? lloyd! : beyond!) :
+                algo == :lloyd ? lloyd! :
+                algo == :beyond ? beyond! :
+                error("invalid algo")
     DataLogging.@push_prefix! "INIT_REFINE"
     m, n = size(data)
     @assert J * k ≤ n
@@ -845,7 +862,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = inner_init(S, rdata, k)
-                lloyd!(config, rdata, 1_000, 1e-4, false)
+                opt_algo!(config, rdata, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end
@@ -858,7 +875,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
             for a = 1:J
                 config = Configuration(pool, configs[a].centroids)
                 DataLogging.@push_prefix! "SPLIT=$a"
-                lloyd!(config, pool, 1_000, 1e-4, false)
+                opt_algo!(config, pool, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end
@@ -873,7 +890,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
     return mconfig
 end
 
-function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int)
+function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int; kw...)
     @extract S : rounds ϕ
     DataLogging.@push_prefix! "INIT_SCALA"
     m, n = size(data)
@@ -1187,9 +1204,10 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
+        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS(),
         verbose::Bool = true,
         tol::Float64 = 1e-5,
+        beyond::Bool = false,
         logfile::AbstractString = "",
     )
 
@@ -1213,10 +1231,12 @@ function kmeans(
         end
     end
     m, n = size(data)
-    DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
+    DataLogging.@log "INPUTS m: $m n: $n k: $k beyond: $beyond seed: $seed"
+
+    opt_algo!, default_algo = beyond ? (beyond!, :beyond) : (lloyd!, :lloyd)
 
     if kmseeder isa KMeansSeeder
-        config = init_centroids(kmseeder, data, k)
+        config = init_centroids(kmseeder, data, k; default_algo)
     else
         centroids = kmseeder
         size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
@@ -1225,60 +1245,7 @@ function kmeans(
 
     verbose && println("initial cost = $(config.cost)")
     DataLogging.@log "INIT_COST" config.cost
-    converged = lloyd!(config, data, max_it, tol, verbose)
-    DataLogging.@log "FINAL_COST" config.cost
-
-    DataLogging.@pop_prefix!
-    logger ≢ nothing && pop_logger!()
-
-    exit_status = converged ? :converged : :maxiters
-
-    return Results(exit_status, config)
-end
-
-function beyond_kmeans(
-        data::Matrix{Float64}, k::Integer;
-        max_it::Integer = 1000,
-        seed::Union{Integer,Nothing} = nothing,
-        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
-        verbose::Bool = true,
-        tol::Float64 = 1e-5,
-        logfile::AbstractString = "",
-    )
-
-    logger = if !isempty(logfile)
-        if DataLogging.logging_on
-            init_logger(logfile, "w")
-        else
-            @warn "logging is off, ignoring logfile"
-            nothing
-        end
-    end
-
-    DataLogging.@push_prefix! "BEYOND_KMEANS"
-
-    if seed ≢ nothing
-        Random.seed!(seed)
-        if VERSION < v"1.7-"
-            Threads.@threads for h = 1:Threads.nthreads()
-                Random.seed!(seed + h)
-            end
-        end
-    end
-    m, n = size(data)
-    DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
-
-    if kmseeder isa KMeansSeeder
-        config = init_centroids(kmseeder, data, k)
-    else
-        centroids = kmseeder
-        size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
-        config = Configuration(data, centroids)
-    end
-
-    verbose && println("initial cost = $(config.cost)")
-    DataLogging.@log "INIT_COST" config.cost
-    converged = beyond!(config, data, max_it, tol, verbose)
+    converged = opt_algo!(config, data, max_it, tol, verbose)
     DataLogging.@log "FINAL_COST" config.cost
 
     DataLogging.@pop_prefix!
@@ -1299,10 +1266,12 @@ function gen_seeder(
         rlevel::Int = 1,
         rounds::Int = 5,
         ϕ::Float64 = 2.0,
+        algo::AbstractString = "auto",
     )
     all_basic_methods = ["++", "unif", "pnn", "maxmin", "scala"]
     all_rec_methods = ["refine", "pnns"]
     all_methods = [all_basic_methods; all_rec_methods]
+    all_algos = ["auto", "lloyd", "beyond"]
     init ∈ all_methods || throw(ArgumentError("init should either be a matrix or one of: $all_methods"))
     if init ∈ all_rec_methods
         if init0 == ""
@@ -1317,8 +1286,10 @@ function gen_seeder(
         else
             throw(ArgumentError("when init=$init, init0 should be \"self\" or one of: $all_basic_methods"))
         end
+        algo ∈ all_algos || throw(ArgumentError("algo should be one of: $all_algos"))
     else
         init0 == "" || @warn("Ignoring init0=$init0 with init=$init")
+        algo == "auto" || @warn("Ignoring algo=$algo with init=$init")
     end
 
     if init ∈ all_basic_methods
@@ -1330,7 +1301,7 @@ function gen_seeder(
                error("wat")
     elseif init == "pnns" && init0 == "self"
         @assert rlevel == 0
-        return KMPNNSR(;ρ)
+        return KMPNNSR(;ρ, algo=Symbol(algo))
     else
         @assert rlevel ≥ 1
         kmseeder0 = init0 == "++"     ? KMPlusPlus{ncandidates}() :
@@ -1340,8 +1311,8 @@ function gen_seeder(
                     init0 == "scala"  ? KMScala(J, ϕ) :
                     error("wat")
 
-        return init == "pnns"   ? KMPNNS(kmseeder0; ρ, rlevel) :
-               init == "refine" ? KMRefine(kmseeder0; J, rlevel) :
+        return init == "pnns"   ? KMPNNS(kmseeder0; ρ, rlevel, algo=Symbol(algo)) :
+               init == "refine" ? KMRefine(kmseeder0; J, rlevel, algo=Symbol(algo)) :
                error("wut")
     end
 end
