@@ -1019,26 +1019,27 @@ function beyond!(
         affected_clusters = falses(k)
         active .= true
 
+        all_inds = collect(1:k)
+
         safe_mode = false
         it = 0
         @inbounds while it < max_it
             empty!(candidates)
             it += 1
-            allinds = collect(1:k)
             affected_inds = findall(active)
             for i = 1:n
                 ci = c[i]
+                z = csizes[ci]
+                z ≤ 1 && continue
+                v = costs[i]
+                Δ = z / (z - 1) * v
                 wi = w ≡ nothing ? 1 : w[i]
-                inds = active[ci] ? allinds : affected_inds
+                inds = active[ci] ? all_inds : affected_inds
                 for ci′ in inds
                     ci′ == ci && continue
-                    v = costs[i]
                     # @assert v ≈ _cost(data[:,i], centroids[:,ci])
                     @views v′ = wi * _cost(data[:,i], centroids[:,ci′])
-                    z = csizes[ci]
-                    z ≤ 1 && continue
                     z′ = csizes[ci′]
-                    Δ = z / (z - 1) * v
                     Δ′ = z′ / (z′ + 1) * v′
                     Δcost = Δ′ - Δ
                     if Δcost < 0
