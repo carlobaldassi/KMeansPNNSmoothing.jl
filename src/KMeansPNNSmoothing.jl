@@ -1021,7 +1021,7 @@ function beyond!(
         candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
         sizehint!(candidates, n)
         bk_candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
-        sizehint!(candidates, n)
+        sizehint!(bk_candidates, n)
         rollback = Tuple{Int,Int,Int}[]
         sizehint!(rollback, n)
         leftovers = falses(n)
