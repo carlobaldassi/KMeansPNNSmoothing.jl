@@ -985,6 +985,13 @@ function lloyd!(
     return converged
 end
 
+### TODO: add to DataStrcutures
+function Base.copy!(dest::BinaryHeap{T,O}, src::BinaryHeap{T,O}) where {T,O}
+    resize!(dest.valtree, length(src.valtree))
+    copy!(dest.valtree, src.valtree)
+    return dest
+end
+
 function beyond!(
         config::Configuration,
         data::Matrix{Float64},
@@ -999,6 +1006,7 @@ function beyond!(
     DataLogging.@push_prefix! "BEYOND"
     DataLogging.@log "INPUTS max_it: $max_it tol: $tol"
     cost0 = config.cost
+    dcosts = fill(-Inf, n)
     converged = false
     fixedpoint = false
     t = @elapsed begin
@@ -1012,8 +1020,11 @@ function beyond!(
 
         candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
         sizehint!(candidates, n)
+        bk_candidates = BinaryHeap{Tuple{Float64,Int,Int,Int}, DataStructures.FasterForward}()
+        sizehint!(candidates, n)
         rollback = Tuple{Int,Int,Int}[]
         sizehint!(rollback, n)
+        leftovers = falses(n)
 
         affected_points = falses(n)
         affected_clusters = falses(k)
@@ -1022,56 +1033,81 @@ function beyond!(
         all_inds = collect(1:k)
 
         safe_mode = false
+        rolled_back = false
         it = 0
         @inbounds while it < max_it
-            empty!(candidates)
             it += 1
-            affected_inds = findall(active)
-            for i = 1:n
-                ci = c[i]
-                z = csizes[ci]
-                z ≤ 1 && continue
-                v = costs[i]
-                Δ = z / (z - 1) * v
-                wi = w ≡ nothing ? 1 : w[i]
-                inds = active[ci] ? all_inds : affected_inds
-                for ci′ in inds
-                    ci′ == ci && continue
-                    # @assert v ≈ _cost(data[:,i], centroids[:,ci])
-                    @views v′ = wi * _cost(data[:,i], centroids[:,ci′])
-                    z′ = csizes[ci′]
-                    Δ′ = z′ / (z′ + 1) * v′
-                    Δcost = Δ′ - Δ
-                    if Δcost < 0
-                        # @info "i=$i ci=$ci->$ci′ Δcost exp. = $Δcost"
-                        push!(candidates, (Δcost, i, ci, ci′))
+            if rolled_back
+                copy!(candidates, bk_candidates)
+            else
+                @assert isempty(candidates)
+                active_inds = findall(active)
+                for i = 1:n
+                    ci = c[i]
+                    z = csizes[ci]
+                    if z ≤ 1
+                        dcosts[i] = -Inf
+                        continue
+                    end
+                    if active[ci]
+                        old_Δ = dcosts[i]
+                        Δ = z / (z - 1) * costs[i]
+                        dcosts[i] = Δ
+                        fullsearch = (Δ > old_Δ) || leftovers[i]
+                    else
+                        Δ = dcosts[i]
+                        fullsearch = false
+                    end
+                    # Δ = z / (z - 1) * costs[i]
+                    # fullsearch = active[ci]
+                    wi = w ≡ nothing ? 1 : w[i]
+                    inds = fullsearch ? all_inds : active_inds
+                    for ci′ in inds
+                        ci′ == ci && continue
+                        # @assert v ≈ _cost(data[:,i], centroids[:,ci])
+                        @views v′ = wi * _cost(data[:,i], centroids[:,ci′])
+                        z′ = csizes[ci′]
+                        Δ′ = z′ / (z′ + 1) * v′
+                        Δcost = Δ′ - Δ
+                        if Δcost < 0
+                            # @info "i=$i ci=$ci->$ci′ Δcost exp. = $Δcost"
+                            push!(candidates, (Δcost, i, ci, ci′))
+                        end
                     end
                 end
+
+                if length(candidates) == 0
+                    # old_cost = config.cost
+                    # partition_from_centroids!(config, data; force_full=true)
+                    verbose && println("fixed point cost = $(config.cost)")
+                    # @assert config.cost ≤ old_cost + 1e-10
+                    converged = true
+                    fixedpoint = true
+                    break
+                end
+
+                copy!(bk_candidates, candidates)
             end
 
-            if length(candidates) == 0
-                # old_cost = config.cost
-                # partition_from_centroids!(config, data; force_full=true)
-                verbose && println("fixed point cost = $(config.cost)")
-                # @assert config.cost ≤ old_cost + 1e-10
-                converged = true
-                fixedpoint = true
-                break
-            end
             affected_points .= false
             affected_clusters .= false
             np = 0
             nc = 0
 
             empty!(rollback)
+            leftovers .= false
 
             old_cost = config.cost
             safe = true
             while length(candidates) > 0 && np < n && (!safe_mode || nc < k)
                 (Δcost, i, ci, ci′) = pop!(candidates)
-                affected_points[i] && continue
+                if affected_points[i]
+                    leftovers[i] = true
+                    continue
+                end
                 if (affected_clusters[ci] || affected_clusters[ci′])
                     if safe_mode
+                        leftovers[i] = true
                         continue
                     else
                         safe = false
@@ -1079,10 +1115,13 @@ function beyond!(
                 end
                 z = csizes[ci]
                 z′ = csizes[ci′]
-                @assert (!safe_mode || z > 1)
-                z ≤ 1 && continue
+                if z ≤ 1
+                    @assert !safe_mode
+                    @assert affected_clusters[ci]
+                    continue
+                end
 
-                push!(rollback, (i, ci, ci′))
+                !safe_mode && push!(rollback, (i, ci, ci′))
 
                 np += 1
                 affected_points[i] = true
@@ -1102,6 +1141,11 @@ function beyond!(
 
                 # config.cost += Δcost
             end
+            while length(candidates) > 0
+                (Δcost, i, ci, ci′) = pop!(candidates)
+                leftovers[i] = true
+            end
+
             for i = 1:n
                 j = c[i]
                 if affected_clusters[j]
@@ -1113,6 +1157,7 @@ function beyond!(
             config.cost = sum(costs)
             @assert !safe || config.cost ≤ old_cost + 1e-10
             if config.cost > old_cost
+                ## rollback
                 @assert length(rollback) == np length(rollback),np
                 DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: true sm: $safe_mode s: $safe)"
                 verbose && println("beyond it = $it cost = $(config.cost) [np=$np] unsafe mode failed!")
@@ -1141,10 +1186,12 @@ function beyond!(
                 config.cost = sum(costs)
                 @assert config.cost ≈ old_cost
                 safe_mode = true
+                rolled_back = true
             else
                 DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: false sm: $safe_mode s: $safe)"
                 verbose && println("beyond it = $it cost = $(config.cost) [np=$np]" * (safe_mode ? " safe mode" : safe ? " safe" : ""))
                 safe_mode = false
+                rolled_back = false
                 active .= affected_clusters
                 if config.cost ≥ old_cost * (1 - tol)
                     verbose && println("converged cost = $(config.cost)")
