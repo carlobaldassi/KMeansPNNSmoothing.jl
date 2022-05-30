@@ -794,7 +794,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int; default_al
             Threads.@threads for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
-                config = inner_init(S, rdata, k)
+                config = inner_init(S, rdata, k; default_algo)
                 opt_algo!(config, rdata, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
