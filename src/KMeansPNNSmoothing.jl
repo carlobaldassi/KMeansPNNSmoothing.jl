@@ -1017,7 +1017,7 @@ function beyond!(
 
         affected_points = falses(n)
         affected_clusters = falses(k)
-        affected_clusters_prev = trues(k)
+        active .= true
 
         safe_mode = false
         it = 0
@@ -1025,12 +1025,12 @@ function beyond!(
             empty!(candidates)
             it += 1
             allinds = collect(1:k)
-            affected_inds = findall(affected_clusters_prev)
+            affected_inds = findall(active)
             for i = 1:n
                 ci = c[i]
                 wi = w ≡ nothing ? 1 : w[i]
-                inds = affected_clusters_prev[ci] ? allinds : affected_inds
-                for ci′ = inds
+                inds = active[ci] ? allinds : affected_inds
+                for ci′ in inds
                     ci′ == ci && continue
                     v = costs[i]
                     # @assert v ≈ _cost(data[:,i], centroids[:,ci])
@@ -1144,7 +1144,7 @@ function beyond!(
                 DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: false sm: $safe_mode s: $safe)"
                 verbose && println("beyond it = $it cost = $(config.cost) [np=$np]" * (safe_mode ? " safe mode" : safe ? " safe" : ""))
                 safe_mode = false
-                affected_clusters_prev .= affected_clusters
+                active .= affected_clusters
                 if config.cost ≥ old_cost * (1 - tol)
                     verbose && println("converged cost = $(config.cost)")
                     converged = true
