@@ -1092,7 +1092,7 @@ function gen_seeder(
                error("wat")
     elseif init == "pnns" && init0 == "self"
         @assert rlevel == 0
-        return KMPNNSR(ρ)
+        return KMPNNSR(;ρ)
     else
         @assert rlevel ≥ 1
         kmseeder0 = init0 == "++"     ? KMPlusPlus{ncandidates}() :
@@ -1102,8 +1102,8 @@ function gen_seeder(
                     init0 == "scala"  ? KMScala(J, ϕ) :
                     error("wat")
 
-        return init == "pnns"   ? KMPNNS(kmseeder0, ρ; rlevel) :
-               init == "refine" ? KMRefine(kmseeder0, J; rlevel) :
+        return init == "pnns"   ? KMPNNS(kmseeder0; ρ, rlevel) :
+               init == "refine" ? KMRefine(kmseeder0; J, rlevel) :
                error("wut")
     end
 end
