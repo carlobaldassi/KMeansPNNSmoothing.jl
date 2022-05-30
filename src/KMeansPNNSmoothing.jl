@@ -1121,7 +1121,7 @@ function beyond!(
                     continue
                 end
 
-                !safe_mode && push!(rollback, (i, ci, ci′))
+                safe_mode || push!(rollback, (i, ci, ci′))
 
                 np += 1
                 affected_points[i] = true
@@ -1156,7 +1156,7 @@ function beyond!(
             end
             config.cost = sum(costs)
             @assert !safe || config.cost ≤ old_cost + 1e-10
-            if config.cost > old_cost
+            if config.cost > old_cost + 1e-10
                 ## rollback
                 @assert length(rollback) == np length(rollback),np
                 DataLogging.@log "it: $it cost: $(config.cost) np: $np failed: true sm: $safe_mode s: $safe)"
