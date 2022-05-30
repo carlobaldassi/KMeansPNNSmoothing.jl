@@ -78,11 +78,13 @@ function remove_empty!(config::Configuration)
     end
     csizes = csizes[nonempty]
     nonempty = trues(k_new)
+    active = trues(k_new)
 
     config.k = k_new
     config.centroids = centroids
     config.csizes = csizes
     config.nonempty = nonempty
+    config.active = active
 
     DataLogging.@pop_prefix!
     return config
