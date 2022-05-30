@@ -60,6 +60,20 @@ function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Uni
     return config
 end
 
+function Base.copy!(config::Configuration, other::Configuration)
+    @extract config : m k n c costs centroids active nonempty csizes
+    @extract other : om=m ok=k on=n oc=c ocosts=costs ocentroids=centroids oactive=active ononempty=nonempty ocsizes=csizes
+    @assert m == om && k == ok && n == on
+    copy!(c, oc)
+    config.cost = other.cost
+    copy!(costs, ocosts)
+    copy!(centroids, ocentroids)
+    copy!(active, oactive)
+    copy!(nonempty, ononempty)
+    copy!(csizes, ocsizes)
+    return config
+end
+
 function remove_empty!(config::Configuration)
     @extract config: m k n c costs centroids active nonempty csizes
     DataLogging.@push_prefix! "RM_EMPTY"
@@ -1325,6 +1339,77 @@ function kmeans(
     logger ≢ nothing && pop_logger!()
 
     exit_status = converged ? :converged : :maxiters
+
+    clear_cache!()
+
+    return Results(exit_status, config)
+end
+
+function rswapkmeans(
+        data::Matrix{Float64}, k::Integer;
+        seed::Union{Integer,Nothing} = nothing,
+        kmseeder::KMeansSeeder = KMPNNS(),
+        opttol::Float64 = 1e-5,
+        beyond::Bool = false,
+        max_swaps::Integer = 1_000,
+        max_time::Float64 = Inf,
+        target_cost::Float64 = 0.0,
+        max_it::Integer = 2,
+        final_converge::Bool = true,
+        verbose::Bool = true,
+    )
+    seed ≢ nothing && Random.seed!(seed)
+    m, n = size(data)
+
+    opt_algo!, default_algo = beyond ? (beyond!, :beyond) : (lloyd!, :lloyd)
+
+    t0 = time()
+
+    config = init_centroids(kmseeder, data, k; default_algo)
+    converged = opt_algo!(config, data, max_swaps, opttol, false)
+
+    verbose && @info "cost after init: $(config.cost)"
+
+    exit_status = :running
+    best_config = copy(config)
+    best_converged = converged
+    it = 0
+    for outer it = 1:max_swaps
+        copy!(config, best_config)
+
+        j = rand(1:k)
+        i = rand(1:n)
+        config.centroids[:,j] = @view data[:,i]
+        config.active[j] = true
+        partition_from_centroids!(config, data)
+
+        converged = opt_algo!(config, data, max_it, opttol, false)
+
+        if config.cost < best_config.cost
+            best_config, config = config, best_config
+            best_converged = converged
+            t = time() - t0
+            verbose && println("  it = $it cost = $(best_config.cost) time = $t")
+        end
+        if best_config.cost ≤ target_cost
+            exit_status = :solved
+            verbose && @info "target_cost achieved"
+            break
+        end
+        if time() - t0 ≥ max_time
+            exit_status = :outoftime
+            verbose && @info "max_time reached"
+            break
+        end
+    end
+    if exit_status == :running
+        exit_status = :maxswaps
+    end
+    if final_converge && !best_converged
+        best_converged = opt_algo!(best_config, data, typemax(Int), opttol, false)
+    end
+    t = time() - t0
+    verbose && @info "final cost = $(best_config.cost) time = $t"
 
     clear_cache!()
 
