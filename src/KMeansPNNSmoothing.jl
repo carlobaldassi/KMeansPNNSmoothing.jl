@@ -1053,13 +1053,11 @@ function beyond!(
                         old_Δ = dcosts[i]
                         Δ = z / (z - 1) * costs[i]
                         dcosts[i] = Δ
-                        fullsearch = (Δ > old_Δ) || leftovers[i]
+                        fullsearch = (Δ > old_Δ) | leftovers[i]
                     else
                         Δ = dcosts[i]
                         fullsearch = false
                     end
-                    # Δ = z / (z - 1) * costs[i]
-                    # fullsearch = active[ci]
                     wi = w ≡ nothing ? 1 : w[i]
                     inds = fullsearch ? all_inds : active_inds
                     for ci′ in inds
@@ -1194,9 +1192,13 @@ function beyond!(
                 rolled_back = false
                 active .= affected_clusters
                 if config.cost ≥ old_cost * (1 - tol)
-                    verbose && println("converged cost = $(config.cost)")
-                    converged = true
-                    break
+                    if safe
+                        verbose && println("converged cost = $(config.cost)")
+                        converged = true
+                        break
+                    else
+                        safe_mode = true
+                    end
                 end
             end
         end
