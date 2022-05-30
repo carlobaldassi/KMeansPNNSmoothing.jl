@@ -225,9 +225,24 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
     gap == 0 && return false
     to_fill = findall(.~(nonempty))[1:gap]
     for j in to_fill
-        i = rand(1:n)
+        local i::Int
+        while true
+            i = rand(1:n)
+            csizes[c[i]] > 1 && break
+        end
+        ci = c[i]
+        z = csizes[ci]
+        datai = @view data[:,i]
+        y = @view centroids[:,ci]
+        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
+        csizes[ci] -= 1
+        config.cost -= costs[i]
         centroids[:,j] .= data[:,i]
+        c[i] = j
+        csizes[j] = 1
+        nonempty[j] = true
         active[j] = true
+        costs[i] = 0.0
     end
     return true
 end
