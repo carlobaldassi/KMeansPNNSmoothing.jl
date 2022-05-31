@@ -1416,6 +1416,146 @@ function rswapkmeans(
     return Results(exit_status, config)
 end
 
+function combine_configs(config1::Configuration, config2::Configuration)
+    @extract config1 : m1=m k1=k n1=n c1=c costs1=costs centroids1=centroids
+    @extract config2 : m2=m k2=k n2=n c2=c costs2=costs centroids2=centroids
+    @assert (m1, n1) == (m2, n2)
+    m, n = m1, n1
+    k = k1 + k2
+    centroids_new = hcat(centroids1, centroids2)
+    @assert size(centroids_new) == (m, k)
+    c_new = zeros(Int, n)
+    costs_new = zeros(n)
+    for i = 1:n
+        j1, j2 = c1[i], c2[i]
+        cost1, cost2 = costs1[i], costs2[i]
+        if cost1 ≤ cost2
+            j = j1
+            cost = cost1
+        else
+            j = k1 + j2
+            cost = cost2
+        end
+        c_new[i], costs_new[i] = j, cost
+    end
+    return Configuration(m, k, n, c_new, costs_new, centroids_new)
+end
+
+function merge_pnn(config1::Configuration, config2::Configuration, data::Matrix{Float64}, tgt_k::Int)
+    config = combine_configs(config1, config2)
+    centroids_from_partition!(config, data, nothing) # TODO support w?
+    remove_empty!(config)
+    pairwise_nn!(config, tgt_k)
+    partition_from_centroids!(config, data)
+    return config
+end
+
+function crossover_GA(configs::Vector{Configuration}, data::Matrix{Float64}, k::Int, a::Int; kw...)
+    Jc = length(configs)
+    (i1, i2) = [(x,y) for x = 1:Jc for y = (x+1):Jc][a] # TODO: quite ugly...
+    return merge_pnn(configs[i1], configs[i2], data, k)
+end
+
+# find c such that: (c * (c-1)) ÷ 2 ≥ J
+elitist_crossset_size(J) = ceil(Int, (1 + √(1 + 8J)) / 2)
+
+function gakmeans(
+        data::Matrix{Float64}, k::Integer, J::Int;
+        seed::Union{Integer,Nothing} = nothing,
+        kmseeder::KMeansSeeder = KMPNNS(),
+        tol::Float64 = 1e-4,
+        opttol::Float64 = 1e-5,
+        beyond::Bool = false,
+        verbose::Bool = true,
+        max_it::Integer = 10,
+        max_gen::Integer = 1_000,
+        stop_if_noimprovement::Bool = true,
+    )
+    J ≥ 2 || throw(ArgumentError("J must be at least 2"))
+
+    seed ≢ nothing && Random.seed!(seed)
+    m, n = size(data)
+
+    Jc = elitist_crossset_size(J)
+
+    opt_algo!, default_algo = beyond ? (beyond!, :beyond) : (lloyd!, :lloyd)
+
+    configs = Vector{Configuration}(undef, J)
+
+    h0 = hash(data)
+
+    exit_status = :running
+    Threads.@threads for a = 1:J
+        h = hash((seed, a), h0)
+        Random.seed!(h)  # horrible hack to ensure determinism (not really required, only useful for experiments)
+        config = init_centroids(kmseeder, data, k; default_algo)
+        converged = opt_algo!(config, data, max_it, opttol, false)
+        configs[a] = config
+    end
+    sort!(configs, by=config->config.cost)
+    costs = [config.cost for config in configs]
+    verbose && @info "costs after init: $(costs)"
+
+    best_cost = configs[1].cost
+    best_config = copy(configs[1])
+
+    mean_cost = mean(config.cost for config in configs)
+    stddev_cost = std((config.cost for config in configs), mean = mean_cost)
+
+    for generation = 1:max_gen
+        old_costs = costs
+        elite_configs = configs[1:Jc]
+        new_configs = Vector{Configuration}(undef, J)
+        h0 = hash(configs)
+        Threads.@threads for a = 1:J
+            h = hash((seed, a), h0)
+            Random.seed!(h)  # horrible hack to ensure determinism (not really required, only useful for experiments)
+            config::Configuration = crossover_GA(elite_configs, data, k, a)
+            converged = opt_algo!(config, data, max_it, opttol, false)
+
+            verbose && println("  a = $a cost = $(config.cost)")
+            new_configs[a] = config
+        end
+        sort!(new_configs, by=config->config.cost) # TODO ? the scaling is bad, but in practice this is negligible
+        configs = new_configs
+        costs = [config.cost for config in configs]
+
+        if configs[1].cost < best_cost
+            best_cost = configs[1].cost
+            best_config = copy(configs[1])
+            improved = true
+        else
+            improved = false
+        end
+
+        verbose && @info "costs after gen $generation: $costs"
+        mean_cost = mean(costs)
+        stddev_cost = std(costs, mean = mean_cost)
+        verbose && println("  best_cost = $best_cost mean cost = $mean_cost ± $stddev_cost")
+
+        ## same condition as in the original implementation
+        if stop_if_noimprovement && !improved && generation > 2
+            verbose && @info "no improvement"
+            exit_status = :noimprovement
+            break
+        end
+        if mean_cost ≤ best_cost * (1 + tol)
+            verbose && @info "collapsed"
+            exit_status = :collapsed
+            break
+        end
+    end
+    if exit_status == :running
+        exit_status = :maxgenerations
+    end
+
+    verbose && @info "final cost = $best_cost"
+
+    clear_cache!()
+
+    return Results(exit_status, best_config)
+end
+
 function gen_seeder(
         init::AbstractString = "pnns"
         ;
