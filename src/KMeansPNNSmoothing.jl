@@ -1556,6 +1556,167 @@ function gakmeans(
     return Results(exit_status, best_config)
 end
 
+function rec_spawn_new_centroids(pool::Matrix{Float64}, data::Matrix{Float64}, w::Vector{Float64}, k::Int; ncandidates = nothing)
+    m, np = size(pool)
+    @assert np ≥ k
+    n = size(data, 2)
+    @assert size(data, 1) == m
+
+    ncandidates::Int = ncandidates ≡ nothing ? floor(Int, 2 + log(k)) : ncandidates
+
+    centr = zeros(m, k)
+    i = sample(1:np, Weights(w))
+    pooli = pool[:,i]
+    centr[:,1] .= pooli
+
+    costs = compute_costs_one(data, pooli)
+    pcosts = compute_costs_one(pool, pooli)
+
+    curr_cost = sum(costs)
+    c = ones(Int, n)
+
+    new_costs, new_c = similar(costs), similar(c)
+    new_costs_best, new_c_best = similar(costs), similar(c)
+    for j = 2:k
+        pw = Weights(pcosts .* w)
+        nonz = count(pw .≠ 0)
+        candidates = sample(1:np, pw, min(ncandidates,np,nonz), replace = false)
+        cost_best = Inf
+        y_best = 0
+        for y in candidates
+            pooly = pool[:,y]
+            compute_costs_one!(new_costs, data, pooly)
+            cost = 0.0
+            @inbounds for i = 1:n
+                v = new_costs[i]
+                v′ = costs[i]
+                if v < v′
+                    new_c[i] = j
+                    cost += v
+                else
+                    new_costs[i] = v′
+                    new_c[i] = c[i]
+                    cost += v′
+                end
+            end
+            if cost < cost_best
+                cost_best = cost
+                y_best = y
+                new_costs_best, new_costs = new_costs, new_costs_best
+                new_c_best, new_c = new_c, new_c_best
+            end
+        end
+        @assert y_best ≠ 0 && cost_best < Inf
+        pooly = pool[:,y_best]
+        centr[:,j] .= pooly
+        costs, new_costs_best = new_costs_best, costs
+        pcosts .= min.(pcosts, compute_costs_one(pool, pooly))
+        c, new_c_best = new_c_best, c
+    end
+    return Configuration(m, k, n, c, costs, centr)
+end
+
+function reckmeans(
+        data::Matrix{Float64}, k::Integer, J::Int;
+        Δβ::Float64 = 0.1,
+        seed::Union{Integer,Nothing} = nothing,
+        kmseeder::KMeansSeeder = KMPNNS(),
+        tol::Float64 = 1e-4,
+        opttol::Float64 = 1e-5,
+        beyond::Bool = false,
+        verbose::Bool = true,
+        max_it::Int = 10,
+        stop_if_noimprovement::Bool = false,
+        max_gen::Int = 1_000
+    )
+    J ≥ 2 || throw(ArgumentError("J must be at least 2"))
+
+    seed ≢ nothing && Random.seed!(seed)
+    m, n = size(data)
+
+    opt_algo!, default_algo = beyond ? (beyond!, :beyond) : (lloyd!, :lloyd)
+
+    β = 0.0
+    best_cost = Inf
+    local best_config::Configuration
+
+    configs = Vector{Configuration}(undef, J)
+
+    h0 = hash(data)
+
+    exit_status = :running
+    Threads.@threads for a = 1:J
+        h = hash((seed, a), h0)
+        Random.seed!(h)  # horrible hack to ensure determinism (not really required, only useful for experiments)
+        config = init_centroids(kmseeder, data, k; default_algo)
+        converged = opt_algo!(config, data, max_it, opttol, false)
+        configs[a] = config
+    end
+    sort!(configs, by=config->config.cost)
+    costs = [config.cost for config in configs]
+    verbose && @info "costs after init: $(costs)"
+
+    best_cost = configs[1].cost
+    best_config = copy(configs[1])
+
+    mean_cost = mean(config.cost for config in configs)
+    stddev_cost = std((config.cost for config in configs), mean = mean_cost)
+
+    w = Float64[]
+
+    for generation = 1:max_gen
+        verbose && @info "gen = $generation"
+        pool = hcat((config.centroids for config in configs)...)
+        resize!(w, size(pool,2))
+        β += Δβ
+        for a = 1:(length(w) ÷ k)
+            w[(1:k) .+ (a-1)*k] .= exp(-β * ((configs[a].cost - best_cost) / (mean_cost - best_cost)))
+        end
+        h0 = hash(pool)
+        new_configs = Vector{Configuration}(undef, J)
+        Threads.@threads for a = 1:J
+            h = hash((seed, a), h0)
+            Random.seed!(h)  # horrible hack to ensure determinism (not really required, only useful for experiments)
+            config = rec_spawn_new_centroids(pool, data, w, k)
+
+            converged = opt_algo!(config, data, max_it, opttol, false)
+            verbose && println("  a = $a cost = $(config.cost)")
+            new_configs[a] = config
+        end
+        append!(configs, new_configs)
+        sort!(configs, by=config->config.cost)
+        configs = configs[1:J]
+
+        if configs[1].cost < best_cost
+            best_cost = configs[1].cost
+            copy!(best_config, configs[1])
+            improved = true
+        else
+            improved = false
+        end
+        mean_cost = mean(config.cost for config in configs)
+        stddev_cost = std((config.cost for config in configs), mean = mean_cost)
+        verbose && println("  best_cost = $best_cost mean cost = $mean_cost ± $stddev_cost")
+        if stop_if_noimprovement && !improved
+            verbose && @info "no improvement"
+            exit_status = :noimprovement
+            break
+        end
+        if mean_cost ≤ best_cost * (1 + tol)
+            verbose && @info "collapsed"
+            exit_status = :collapsed
+            break
+        end
+    end
+    exit_status == :running && (exit_status = :maxgenerations)
+
+    verbose && @info "final cost = $best_cost"
+
+    clear_cache!()
+
+    return Results(exit_status, best_config)
+end
+
 function gen_seeder(
         init::AbstractString = "pnns"
         ;
