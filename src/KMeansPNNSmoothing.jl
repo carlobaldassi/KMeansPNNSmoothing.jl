@@ -123,10 +123,9 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     active_inds = findall(active)
     all_inds = collect(1:k)
 
-    fill!(nonempty, false)
-    fill!(csizes, 0)
-
     num_fullsearch_th = zeros(Int, Threads.nthreads())
+
+    np = 0
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
@@ -150,10 +149,14 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
                     v, x = v′, j
                 end
             end
+            x ≠ c[i] && (np += 1)
             costs[i], c[i] = v, x
         end
     end
     cost = sum(costs)
+
+    fill!(nonempty, false)
+    fill!(csizes, 0)
     for i in 1:n
         ci = c[i]
         csizes[ci] += 1
@@ -164,6 +167,7 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
     DataLogging.@pop_prefix!
+    return np # XXX
     return config
 end
 
@@ -998,15 +1002,15 @@ function lloyd!(
         centroids_from_partition!(config, data, w)
         old_cost = config.cost
         found_empty = check_empty!(config, data)
-        partition_from_centroids!(config, data, w)
+        np = partition_from_centroids!(config, data, w)
         new_cost = config.cost
-        DataLogging.@log "it: $it cost: $(config.cost)$(found_empty ? "[found_empty]" : ""))"
+        DataLogging.@log "it: $it cost: $(config.cost)$(found_empty ? "[found_empty]" : "")"
         if new_cost ≥ old_cost * (1 - tol) && !found_empty
             verbose && println("converged cost = $new_cost")
             converged = true
             break
         end
-        verbose && println("lloyd it = $it cost = $new_cost")
+        verbose && println("lloyd it = $it cost = $new_cost [np=$np]")
     end
     DataLogging.@log "DONE time: $t iters: $it converged: $converged cost0: $cost0 cost1: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1092,7 +1096,6 @@ function beyond!(
                     datai = @view(data[:,i])
                     for ci′ in inds
                         ci′ == ci && continue
-                        # @assert v ≈ _cost(datai, centroids[:,ci])
                         @views v′ = wi * _cost(datai, centroids[:,ci′])
                         Δ′ = afact[ci′] * v′
                         Δcost = Δ′ - Δ
