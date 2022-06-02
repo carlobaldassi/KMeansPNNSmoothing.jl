@@ -24,7 +24,6 @@ mutable struct Configuration
     costs::Vector{Float64}
     centroids::Matrix{Float64}
     active::BitVector
-    nonempty::BitVector
     csizes::Vector{Int}
     function Configuration(m::Int, k::Int, n::Int, c::Vector{Int}, costs::Vector{Float64}, centroids::Matrix{Float64})
         @assert length(c) == n
@@ -32,19 +31,17 @@ mutable struct Configuration
         @assert size(centroids) == (m, k)
         cost = sum(costs)
         active = trues(k)
-        nonempty = trues(k)
         csizes = zeros(Int, k)
         if !all(c .== 0)
             for i = 1:n
                 csizes[c[i]] += 1
             end
-            nonempty .= csizes .> 0
         end
-        return new(m, k, n, c, cost, costs, centroids, active, nonempty, csizes)
+        return new(m, k, n, c, cost, costs, centroids, active, csizes)
     end
     function Base.copy(config::Configuration)
-        @extract config : m k n c cost costs centroids active nonempty csizes
-        return new(m, k, n, copy(c), cost, copy(costs), copy(centroids), copy(active), copy(nonempty), copy(csizes))
+        @extract config : m k n c cost costs centroids active csizes
+        return new(m, k, n, copy(c), cost, copy(costs), copy(centroids), copy(active), copy(csizes))
     end
 end
 
@@ -61,9 +58,10 @@ function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Uni
 end
 
 function remove_empty!(config::Configuration)
-    @extract config: m k n c costs centroids active nonempty csizes
+    @extract config: m k n c costs centroids active csizes
     DataLogging.@push_prefix! "RM_EMPTY"
 
+    nonempty = csizes .> 0
     k_new = sum(nonempty)
     DataLogging.@log "k_new: $k_new k: $k"
     if k_new == k
@@ -77,13 +75,11 @@ function remove_empty!(config::Configuration)
         c[i] = new_inds[c[i]]
     end
     csizes = csizes[nonempty]
-    nonempty = trues(k_new)
     active = trues(k_new)
 
     config.k = k_new
     config.centroids = centroids
     config.csizes = csizes
-    config.nonempty = nonempty
     config.active = active
 
     DataLogging.@pop_prefix!
@@ -100,7 +96,7 @@ end
 
 
 function partition_from_centroids!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids active nonempty csizes
+    @extract config: m k n c costs centroids active csizes
     @assert size(data) == (m, n)
 
     DataLogging.@push_prefix! "P_FROM_C"
@@ -109,7 +105,6 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     active_inds = findall(active)
     all_inds = collect(1:k)
 
-    fill!(nonempty, false)
     fill!(csizes, 0)
 
     num_fullsearch_th = zeros(Int, Threads.nthreads())
@@ -141,7 +136,6 @@ function partition_from_centroids!(config::Configuration, data::Matrix{Float64},
     for i in 1:n
         ci = c[i]
         csizes[ci] += 1
-        nonempty[ci] = true
     end
     num_fullsearch = sum(num_fullsearch_th)
 
@@ -157,7 +151,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
     zsthrdict = Dict{NTuple{2,Int},Vector{Vector{Float64}}}()
 
     global function centroids_from_partition!(config::Configuration, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
-        @extract config: m k n c costs centroids active nonempty csizes
+        @extract config: m k n c costs centroids active csizes
         @assert size(data) == (m, n)
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
@@ -199,7 +193,6 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @inbounds for j = 1:k
             z = zs[j]
             z > 0 || continue
-            @assert nonempty[j]
             for l = 1:m
                 new_centroids[l,j] /= z
                 new_centroids[l,j] ≠ centroids[l,j] && (active[j] = true)
@@ -218,7 +211,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 end
 
 function check_empty!(config::Configuration, data::Matrix{Float64})
-    @extract config: m k n c costs centroids active nonempty csizes
+    @extract config: m k n c costs centroids active csizes
+    nonempty = csizes .> 0
     num_nonempty = sum(nonempty)
     num_centroids = min(config.n, config.k)
     gap = num_centroids - num_nonempty
@@ -240,7 +234,6 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
         centroids[:,j] .= data[:,i]
         c[i] = j
         csizes[j] = 1
-        nonempty[j] = true
         active[j] = true
         costs[i] = 0.0
     end
@@ -757,7 +750,6 @@ function pairwise_nn!(config::Configuration, tgt_k::Int)
     config.csizes = csizes[1:k]
     @assert all(config.csizes .> 0)
     config.active = trues(k)
-    config.nonempty = trues(k)
     fill!(config.c, 0) # reset in order for partition_from_centroids! to work
 
     DataLogging.@log "DONE t_costs: $t_costs t_fuse: $t_fuse"
