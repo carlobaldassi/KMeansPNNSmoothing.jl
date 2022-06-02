@@ -1019,7 +1019,7 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS{KMPlusPlus{1}},
+        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS(),
         verbose::Bool = true,
         tol::Float64 = 1e-5,
         logfile::AbstractString = "",
