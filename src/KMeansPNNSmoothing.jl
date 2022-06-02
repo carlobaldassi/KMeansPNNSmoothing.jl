@@ -422,7 +422,7 @@ end
 compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
 init_centroids(::KMPlusPlus{nothing}, data::Matrix{Float64}, k::Int; kw...) =
-    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k)
+    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k; kw...)
 
 function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int; w = nothing) where NC
     DataLogging.@push_prefix! "INIT_PP"
@@ -566,7 +566,7 @@ function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int; w = noth
     return config
 end
 
-function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int)
+function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int; kw...)
     DataLogging.@push_prefix! "INIT_MAXMIN"
     m, n = size(data)
     @assert n ≥ k
@@ -759,7 +759,7 @@ end
 
 inner_init(S::KMMetaSeeder{S0}, data::Matrix{Float64}, k::Int) where S0 = init_centroids(S.init0, data, k)
 
-function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
+function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int; kw...) where S0
     @extract S : ρ
     DataLogging.@push_prefix! "INIT_METANN"
     m, n = size(data)
@@ -809,7 +809,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int) where S0
     return mconfig
 end
 
-function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int)
+function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int; kw...)
     DataLogging.@push_prefix! "INIT_PNN"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
@@ -828,7 +828,7 @@ function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int)
     return config
 end
 
-function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
+function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int; kw...) where S0
     @extract S : J
     DataLogging.@push_prefix! "INIT_REFINE"
     m, n = size(data)
@@ -871,7 +871,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int) where S0
     return mconfig
 end
 
-function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int)
+function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int; kw...)
     @extract S : rounds ϕ
     DataLogging.@push_prefix! "INIT_SCALA"
     m, n = size(data)
