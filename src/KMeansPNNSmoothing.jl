@@ -247,10 +247,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         end
     else
         new_stable = trues(k)
+        sorted_neighb = copy.(neighb)
+        did_sort = falses(k)
         t = @elapsed Threads.@threads for i in 1:n
             @inbounds begin
                 ci = c[i]
-                nci = neighb[ci]
+                nci = sorted_neighb[ci]
                 nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
                 @views v = _cost(data[:,i], centroids[:,ci])
                 d = √v
@@ -259,8 +261,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                     costs[i] = v
                     continue
                 end
-                # @assert cdist[ci, first(nci)] == minimum(cdist[ci, nci])
-                lb = cdist[ci, nci[1]] / 2
+                if !did_sort[ci]
+                    sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
+                    did_sort[ci] = true
+                end
+                # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
+                lb = cdist[nci[1], ci] / 2
                 if d < lb
                     costs[i] = v
                     continue
@@ -269,7 +275,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 datai = @view data[:,i]
                 for h = 1:length(nci)
                     j = nci[h]
-                    ub = (h == length(nci)) ? r[ci] : (cdist[ci, nci[h+1]] / 2)
+                    ub = (h == length(nci)) ? r[ci] : (cdist[nci[h+1], ci] / 2)
                     # @assert lb ≤ ub
                     @views v′ = _cost(datai, centroids[:,j])
                     if v′ < v
@@ -486,23 +492,23 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
         # @assert all(maximum(mat[j,c.==j]) ≈ r[j] for j = 1:k) filter(x->!(x[1]≈x[2]), [(maximum(mat[j,c.==j]),r[j]) for j = 1:k])
 
-        @inbounds for j′ = 1:k, j = 1:k
-            cd = cdist[j, j′]
+        @inbounds for j = 1:k, j′ = 1:k
+            cd = cdist[j′, j]
             δ, δ′ = δc[j], δc[j′]
             rj = r[j]
             if cd ≥ 2rj + δ + δ′
-                cdist[j, j′] = cd - δ - δ′
-                # @assert cdist[j, j′] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j, j′], √_cost(centroids[:,j′], centroids[:,j])
+                cdist[j′, j] = cd - δ - δ′
+                # @assert cdist[j′, j] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j′, j], √_cost(centroids[:,j′], centroids[:,j])
             else
                 @views cd = √_cost(centroids[:,j′], centroids[:,j])
-                cdist[j, j′] = cd
+                cdist[j′, j] = cd
             end
         end
         fill!(nstable, false)
         old_nj = Int[]
         sizehint!(old_nj, k)
-        cdvec = Float64[]
-        sizehint!(cdvec, k)
+        # cdvec = Float64[]
+        # sizehint!(cdvec, k)
         @inbounds for j = 1:k
             nj = neighb[j]
             resize!(old_nj, length(nj))
@@ -511,22 +517,22 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             # empty!(nj)
             # empty!(cdvec)
             resize!(nj, k-1)
-            resize!(cdvec, k-1)
+            # resize!(cdvec, k-1)
             ind = 0
             for j′ = 1:k
                 j′ == j && continue
-                if cdist[j, j′] < 2r[j]
+                if cdist[j′, j] < 2r[j]
                     ind += 1
                     nj[ind] = j′
-                    cdvec[ind] = cdist[j,j′]
+                    # cdvec[ind] = cdist[j′,j]
                     # push!(nj, j′)
-                    # push!(cdvec, cdist[j,j′])
+                    # push!(cdvec, cdist[j′,j])
                 end
             end
             resize!(nj, ind)
-            resize!(cdvec, ind)
-            nj .= nj[sortperm(cdvec; alg=QuickSort)]
-            # sort!(nj, by=j′->cdist[j,j′], alg=QuickSort)
+            # resize!(cdvec, ind)
+            # nj .= nj[sortperm(cdvec; alg=QuickSort)]
+            # sort!(nj, by=j′->cdist[j′,j], alg=QuickSort)
             nj == old_nj && (nstable[j] = true)
         end
         return config
