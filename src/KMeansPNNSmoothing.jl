@@ -22,7 +22,7 @@ end
 
 Naive(centroids::Matrix{Float64}) = Naive()
 Base.copy(a::Naive) = a
-reset!(a::Naive) = a
+reset!(centroids::Matrix{Float64}, a::Naive) = a
 
 struct ReducedComparison <: Accelerator
     active::BitVector
@@ -31,7 +31,7 @@ struct ReducedComparison <: Accelerator
 end
 
 ReducedComparison(centroids::Matrix{Float64}) = ReducedComparison(size(centroids, 2))
-reset!(a::ReducedComparison) = (a.active .= true; a)
+reset!(centroids::Matrix{Float64}, a::ReducedComparison) = (a.active .= true; a)
 
 struct KBall <: Accelerator
     δc::Vector{Float64}
@@ -53,7 +53,18 @@ struct KBall <: Accelerator
     Base.copy(a::KBall) = new(copy(a.δc), copy(a.r), copy(a.cdist), copy.(a.neighb), copy(a.stable), copy(a.nstable))
 end
 
-reset!(a::ReducedComparison) = (nothing; a)
+function reset!(centroids::Matrix{Float64}, a::KBall)
+    m, k = size(centroids)
+    a.δc .= zeros(k)
+    fill!(a.r, Inf)
+    @inbounds for j = 1:k, i = 1:k
+        cdist[i,j] = √_cost(centroids[:,i], centroids[:,j])
+    end
+    a.neighb .= [deleteat!(collect(1:k), j) for j = 1:k]
+    fill!(a.stable, false)
+    fill!(a.nstable, false)
+    return a
+end
 
 mutable struct Configuration{A<:Accelerator}
     m::Int
@@ -117,7 +128,7 @@ function remove_empty!(config::Configuration)
         c[i] = new_inds[c[i]]
     end
     csizes = csizes[nonempty]
-    reset!(accel)
+    reset!(centroids, accel)
 
     config.k = k_new
     config.centroids = centroids
