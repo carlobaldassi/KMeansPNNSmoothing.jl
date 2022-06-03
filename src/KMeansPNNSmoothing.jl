@@ -92,9 +92,7 @@ function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, accel:
     c = zeros(Int, n)
     costs = fill(Inf, n)
     config = Configuration{A}(m, k, n, c, costs, centroids, accel)
-    @info "init>"
     partition_from_centroids!(config, data, w)
-    @info "<init"
     return config
 end
 
@@ -136,7 +134,6 @@ Base.@propagate_inbounds function _cost(d1, d2)
     end
     return v1
 end
-
 
 function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes
@@ -229,23 +226,35 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    # fill!(csizes, 0)
-    # fill!(stable, all(c .> 0))
-    new_stable = all(c .> 0) ? trues(k) : falses(k)
-    # fill!(nstable, false)
-
-    t = @elapsed Threads.@threads for i in 1:n
-        @inbounds begin
-            ci = c[i]
-            wi = w ≡ nothing ? 1 : w[i]
-            if ci > 0
+    if any(c .== 0)
+        new_stable = falses(k)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                wi = w ≡ nothing ? 1 : w[i]
+                v, x = Inf, 0
+                for j in 1:k
+                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+                costs[i], c[i] = v, x
+            end
+        end
+    else
+        new_stable = trues(k)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                wi = w ≡ nothing ? 1 : w[i]
                 nci = neighb[ci]
                 length(nci) == 0 && continue
                 nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
                 @views v = wi * _cost(data[:,i], centroids[:,ci])
                 d = √v
                 @assert d ≤ r[ci]
-                @assert cdist[ci, first(nci)] == minimum(cdist[ci, nci])
+                # @assert cdist[ci, first(nci)] == minimum(cdist[ci, nci])
                 lb = cdist[ci, nci[1]] / 2
                 if d < lb
                     costs[i] = v
@@ -269,35 +278,25 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                     new_stable[x] = false
                 end
                 costs[i], c[i] = v, x
-            else
-                v, x = Inf, 0
-                for j in 1:k
-                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                end
-                costs[i], c[i] = v, x
             end
-
         end
     end
-    # XXX
-    for i in 1:n
-        begin
-            ci = c[i]
-            wi = w ≡ nothing ? 1 : w[i]
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = wi * _cost(data[:,i], centroids[:,j])
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
-            @assert v == costs[i] v,costs[i],x,ci,nstable[ci],stable[ci]
-            @assert x == ci
-        end
-    end
+    # # XXX
+    # for i in 1:n
+    #     begin
+    #         ci = c[i]
+    #         wi = w ≡ nothing ? 1 : w[i]
+    #         v, x = Inf, 0
+    #         for j in 1:k
+    #             @views v′ = wi * _cost(data[:,i], centroids[:,j])
+    #             if v′ < v
+    #                 v, x = v′, j
+    #             end
+    #         end
+    #         @assert v == costs[i] v,costs[i],x,ci,nstable[ci],stable[ci]
+    #         @assert x == ci
+    #     end
+    # end
     stable .= new_stable
     cost = sum(costs)
     # cost′ = sum(@views _cost(data[:,i], centroids[:,c[i]]) for i = 1:n) # XXX
@@ -458,7 +457,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         for zz in zs_thr
             zs .+= zz
         end
-        Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
+        # Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
         δc .= 0.0
         @inbounds for j = 1:k
             z = zs[j]
@@ -470,17 +469,17 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
-        @assert all(δc[.~stable] .≈ Δ[.~stable]) δc-Δ
-        @assert all(δc[stable] .== 0)
-        @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
+        # @assert all(δc[.~stable] .≈ Δ[.~stable]) δc-Δ
+        # @assert all(δc[stable] .== 0)
+        # @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
         r[.~stable] .= 0.0
         @inbounds for i = 1:n # TODO: threads
             j = c[i]
             stable[j] && continue
             r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
         end
-        mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
-        @assert all(maximum(mat[j,c.==j]) == r[j] for j = 1:k)
+        # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
+        # @assert all(maximum(mat[j,c.==j]) == r[j] for j = 1:k)
 
         @inbounds for j′ = 1:k, j = 1:k
             cd = cdist[j, j′]
@@ -488,7 +487,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             rj = r[j]
             if cd ≥ 2rj + δ + δ′
                 cdist[j, j′] = cd - δ - δ′
-                @assert cdist[j, j′] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j, j′], √_cost(centroids[:,j′], centroids[:,j])
+                # @assert cdist[j, j′] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j, j′], √_cost(centroids[:,j′], centroids[:,j])
             else
                 @views cd = √_cost(centroids[:,j′], centroids[:,j])
                 cdist[j, j′] = cd
