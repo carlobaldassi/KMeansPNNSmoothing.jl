@@ -226,6 +226,8 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    # all(c .> 0) && @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
+
     if any(c .== 0)
         new_stable = falses(k)
         t = @elapsed Threads.@threads for i in 1:n
@@ -249,11 +251,14 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 ci = c[i]
                 wi = w ≡ nothing ? 1 : w[i]
                 nci = neighb[ci]
-                length(nci) == 0 && continue
                 nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
                 @views v = wi * _cost(data[:,i], centroids[:,ci])
                 d = √v
                 @assert d ≤ r[ci]
+                if length(nci) == 0
+                    costs[i] = v
+                    continue
+                end
                 # @assert cdist[ci, first(nci)] == minimum(cdist[ci, nci])
                 lb = cdist[ci, nci[1]] / 2
                 if d < lb
@@ -261,7 +266,6 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                     continue
                 end
                 x = ci
-                lb₀ = lb
                 for h = 1:length(nci)
                     j = nci[h]
                     ub = (h == length(nci)) ? r[ci] : (cdist[ci, nci[h+1]] / 2)
@@ -282,7 +286,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         end
     end
     # # XXX
-    # for i in 1:n
+    # @inbounds for i in 1:n
     #     begin
     #         ci = c[i]
     #         wi = w ≡ nothing ? 1 : w[i]
@@ -293,8 +297,8 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     #                 v, x = v′, j
     #             end
     #         end
-    #         @assert v == costs[i] v,costs[i],x,ci,nstable[ci],stable[ci]
-    #         @assert x == ci
+    #         @assert v ≈ costs[i] v,costs[i],x,ci,nstable[ci],stable[ci],length(neighb[ci])
+    #         @assert x == ci v,costs[i],x,ci,nstable[ci],stable[ci]
     #     end
     # end
     stable .= new_stable
@@ -479,7 +483,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
         end
         # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
-        # @assert all(maximum(mat[j,c.==j]) == r[j] for j = 1:k)
+        # @assert all(maximum(mat[j,c.==j]) ≈ r[j] for j = 1:k) filter(x->!(x[1]≈x[2]), [(maximum(mat[j,c.==j]),r[j]) for j = 1:k])
 
         @inbounds for j′ = 1:k, j = 1:k
             cd = cdist[j, j′]
