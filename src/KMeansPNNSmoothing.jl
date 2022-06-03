@@ -619,13 +619,12 @@ end
 
 function check_empty!(config::Configuration{KBall}, data::Matrix{Float64})
     @extract config: m k n c costs centroids csizes accel
-    @extract accel: δc r cdist stable
+    @extract accel: δc r cdist neighb stable nstable
     nonempty = csizes .> 0
     num_nonempty = sum(nonempty)
     num_centroids = min(config.n, config.k)
     gap = num_centroids - num_nonempty
     gap == 0 && return false
-    error() # TODO !!!
     to_fill = findall(.~(nonempty))[1:gap]
     for j in to_fill
         local i::Int
@@ -640,10 +639,22 @@ function check_empty!(config::Configuration{KBall}, data::Matrix{Float64})
         centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
         csizes[ci] -= 1
         config.cost -= costs[i]
-        centroids[:,j] .= data[:,i]
+
+        δc[j] += √_cost(centroids[:,j], datai)
+        centroids[:,j] .= datai
         c[i] = j
         csizes[j] = 1
-        active[j] = true
+
+        r[j] = 0.0
+        for j′ = 1:k
+            cd = @views √_cost(centroids[:,j′], centroids[:,j])
+            cdist[j′,j] = cd
+            cdist[j,j′] = cd
+        end
+        empty!(neighb[j])
+        stable[j] = false
+        nstable[j] = false
+
         costs[i] = 0.0
     end
     return true
