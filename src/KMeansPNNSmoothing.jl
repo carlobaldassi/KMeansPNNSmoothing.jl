@@ -223,6 +223,8 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     @extract accel: δc r cdist neighb stable nstable
     @assert size(data) == (m, n)
 
+    w ≡ nothing || error("w unsupported with KBall accelerator method")
+
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
@@ -233,10 +235,9 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         t = @elapsed Threads.@threads for i in 1:n
             @inbounds begin
                 ci = c[i]
-                wi = w ≡ nothing ? 1 : w[i]
                 v, x = Inf, 0
                 for j in 1:k
-                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                    @views v′ = _cost(data[:,i], centroids[:,j])
                     if v′ < v
                         v, x = v′, j
                     end
@@ -249,10 +250,9 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         t = @elapsed Threads.@threads for i in 1:n
             @inbounds begin
                 ci = c[i]
-                wi = w ≡ nothing ? 1 : w[i]
                 nci = neighb[ci]
                 nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
-                @views v = wi * _cost(data[:,i], centroids[:,ci])
+                @views v = _cost(data[:,i], centroids[:,ci])
                 d = √v
                 @assert d ≤ r[ci]
                 if length(nci) == 0
@@ -270,7 +270,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                     j = nci[h]
                     ub = (h == length(nci)) ? r[ci] : (cdist[ci, nci[h+1]] / 2)
                     @assert lb ≤ ub
-                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                    @views v′ = _cost(data[:,i], centroids[:,j])
                     if v′ < v
                         v, x = v′, j
                     end
@@ -289,10 +289,9 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     # @inbounds for i in 1:n
     #     begin
     #         ci = c[i]
-    #         wi = w ≡ nothing ? 1 : w[i]
     #         v, x = Inf, 0
     #         for j in 1:k
-    #             @views v′ = wi * _cost(data[:,i], centroids[:,j])
+    #             @views v′ = _cost(data[:,i], centroids[:,j])
     #             if v′ < v
     #                 v, x = v′, j
     #             end
@@ -425,6 +424,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract accel: δc r cdist neighb stable nstable
         @assert size(data) == (m, n)
 
+        w ≡ nothing || error("w unsupported with KBall accelerator method")
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -444,13 +445,12 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             @inbounds begin
                 j = c[i]
                 stable[j] && continue
-                wi = w ≡ nothing ? 1 : w[i]
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
                 for l = 1:m
-                    nc[l,j] += wi * data[l,i]
+                    nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += wi
+                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
@@ -1302,7 +1302,7 @@ function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int, A::Type{<:Acc
             z[c[i]] += 1
         end
         # @assert all(z .> 0)
-        cconfig = init_centroids(KMPlusPlus{1}(), centr, k, A; w=z)
+        cconfig = init_centroids(KMPlusPlus{1}(), centr, k, ReducedComparison; w=z)
         lloyd!(cconfig, centr, 1_000, 1e-4, false, z)
         Configuration(data, cconfig.centroids, A)
         # mconfig = Configuration(m, k′, n, c, costs, centr)
