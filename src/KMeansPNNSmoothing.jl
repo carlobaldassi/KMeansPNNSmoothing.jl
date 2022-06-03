@@ -266,11 +266,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                     continue
                 end
                 x = ci
+                datai = @view data[:,i]
                 for h = 1:length(nci)
                     j = nci[h]
                     ub = (h == length(nci)) ? r[ci] : (cdist[ci, nci[h+1]] / 2)
-                    @assert lb ≤ ub
-                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    # @assert lb ≤ ub
+                    @views v′ = _cost(datai, centroids[:,j])
                     if v′ < v
                         v, x = v′, j
                     end
@@ -500,18 +501,33 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         fill!(nstable, false)
         old_nj = Int[]
         sizehint!(old_nj, k)
+        cdvec = Float64[]
+        sizehint!(cdvec, k)
         @inbounds for j = 1:k
             nj = neighb[j]
             resize!(old_nj, length(nj))
             copy!(old_nj, nj)
-            sort!(old_nj)
-            empty!(nj)
+            # sort!(old_nj, alg=MergeSort)
+            # empty!(nj)
+            # empty!(cdvec)
+            resize!(nj, k-1)
+            resize!(cdvec, k-1)
+            ind = 0
             for j′ = 1:k
                 j′ == j && continue
-                cdist[j, j′] < 2r[j] && push!(nj, j′)
+                if cdist[j, j′] < 2r[j]
+                    ind += 1
+                    nj[ind] = j′
+                    cdvec[ind] = cdist[j,j′]
+                    # push!(nj, j′)
+                    # push!(cdvec, cdist[j,j′])
+                end
             end
+            resize!(nj, ind)
+            resize!(cdvec, ind)
+            nj .= nj[sortperm(cdvec; alg=QuickSort)]
+            # sort!(nj, by=j′->cdist[j,j′], alg=QuickSort)
             nj == old_nj && (nstable[j] = true)
-            sort!(nj, by=j′->cdist[j,j′])
         end
         return config
     end
