@@ -1508,7 +1508,7 @@ function kmeans(
     else
         centroids = kmseeder
         size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
-        config = Configuration(data, centroids)
+        config = Configuration(data, centroids, accel)
     end
 
     verbose && println("initial cost = $(config.cost)")
