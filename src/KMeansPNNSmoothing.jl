@@ -34,14 +34,23 @@ ReducedComparison(centroids::Matrix{Float64}) = ReducedComparison(size(centroids
 reset!(a::ReducedComparison) = (a.active .= true; a)
 
 struct KBall <: Accelerator
-    δc::Matrix{Float64}
+    δc::Vector{Float64}
     r::Vector{Float64}
     cdist::Matrix{Float64}
+    neighb::Vector{Vector{Int}}
+    stable::BitVector
+    nstable::BitVector
     function KBall(centroids::Matrix{Float64})
-        error()
-        new()
+        m, k = size(centroids)
+        δc = zeros(k)
+        r = fill(Inf, k)
+        cdist = [@inbounds @views √_cost(centroids[:,i], centroids[:,j]) for i = 1:k, j = 1:k] # TODO
+        neighb = [deleteat!(collect(1:k), j) for j = 1:k]
+        stable = falses(k)
+        nstable = falses(k)
+        new(δc, r, cdist, neighb, stable, nstable)
     end
-    Base.copy(a::KBall) = new(copy(a.δc), copy(a.r), copy(a.cdist))
+    Base.copy(a::KBall) = new(copy(a.δc), copy(a.r), copy(a.cdist), copy.(a.neighb), copy(a.stable), copy(a.nstable))
 end
 
 reset!(a::ReducedComparison) = (nothing; a)
@@ -83,7 +92,9 @@ function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, accel:
     c = zeros(Int, n)
     costs = fill(Inf, n)
     config = Configuration{A}(m, k, n, c, costs, centroids, accel)
+    @info "init>"
     partition_from_centroids!(config, data, w)
+    @info "<init"
     return config
 end
 
@@ -126,6 +137,38 @@ Base.@propagate_inbounds function _cost(d1, d2)
     return v1
 end
 
+
+function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes
+    @assert size(data) == (m, n)
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            wi = w ≡ nothing ? 1 : w[i]
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+        end
+    end
+    cost = sum(costs)
+    fill!(csizes, 0)
+    for i in 1:n
+        csizes[c[i]] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return config
+end
 
 function partition_from_centroids!(config::Configuration{ReducedComparison}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
@@ -178,10 +221,148 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     return config
 end
 
+function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc r cdist neighb stable nstable
+    @assert size(data) == (m, n)
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    # fill!(csizes, 0)
+    # fill!(stable, all(c .> 0))
+    new_stable = all(c .> 0) ? trues(k) : falses(k)
+    # fill!(nstable, false)
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            wi = w ≡ nothing ? 1 : w[i]
+            if ci > 0
+                nci = neighb[ci]
+                length(nci) == 0 && continue
+                nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
+                @views v = wi * _cost(data[:,i], centroids[:,ci])
+                d = √v
+                @assert d ≤ r[ci]
+                @assert cdist[ci, first(nci)] == minimum(cdist[ci, nci])
+                lb = cdist[ci, nci[1]] / 2
+                if d < lb
+                    costs[i] = v
+                    continue
+                end
+                x = ci
+                lb₀ = lb
+                for h = 1:length(nci)
+                    j = nci[h]
+                    ub = (h == length(nci)) ? r[ci] : (cdist[ci, nci[h+1]] / 2)
+                    @assert lb ≤ ub
+                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                    lb < d ≤ ub && break
+                    lb = ub
+                end
+                if x ≠ ci
+                    new_stable[ci] = false
+                    new_stable[x] = false
+                end
+                costs[i], c[i] = v, x
+            else
+                v, x = Inf, 0
+                for j in 1:k
+                    @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+                costs[i], c[i] = v, x
+            end
+
+        end
+    end
+    # XXX
+    for i in 1:n
+        begin
+            ci = c[i]
+            wi = w ≡ nothing ? 1 : w[i]
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            @assert v == costs[i] v,costs[i],x,ci,nstable[ci],stable[ci]
+            @assert x == ci
+        end
+    end
+    stable .= new_stable
+    cost = sum(costs)
+    # cost′ = sum(@views _cost(data[:,i], centroids[:,c[i]]) for i = 1:n) # XXX
+    # @assert cost ≈ cost′
+    for i in 1:n
+        ci = c[i]
+        csizes[ci] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return config
+end
+
 let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
     centroidsthrdict = Dict{NTuple{3,Int},Vector{Matrix{Float64}}}(),
     zsdict = Dict{NTuple{2,Int},Vector{Float64}}(),
     zsthrdict = Dict{NTuple{2,Int},Vector{Vector{Float64}}}()
+
+    global function centroids_from_partition!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes
+        @assert size(data) == (m, n)
+
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                wi = w ≡ nothing ? 1 : w[i]
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += wi * data[l,i]
+                end
+                zs_thr[id][j] += wi
+            end
+        end
+        fill!(centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            for l = 1:m
+                centroids[l,j] /= z
+            end
+        end
+        return config
+    end
 
     global function centroids_from_partition!(config::Configuration{ReducedComparison}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
@@ -236,12 +417,137 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         return config
     end
 
+    global function centroids_from_partition!(config::Configuration{KBall}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: δc r cdist neighb stable nstable
+        @assert size(data) == (m, n)
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                stable[j] && continue
+                wi = w ≡ nothing ? 1 : w[i]
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += wi * data[l,i]
+                end
+                zs_thr[id][j] += wi
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
+        δc .= 0.0
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            stable[j] && continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+        @assert all(δc[.~stable] .≈ Δ[.~stable]) δc-Δ
+        @assert all(δc[stable] .== 0)
+        @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
+        r[.~stable] .= 0.0
+        @inbounds for i = 1:n # TODO: threads
+            j = c[i]
+            stable[j] && continue
+            r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
+        end
+        mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
+        @assert all(maximum(mat[j,c.==j]) == r[j] for j = 1:k)
+
+        @inbounds for j′ = 1:k, j = 1:k
+            cd = cdist[j, j′]
+            δ, δ′ = δc[j], δc[j′]
+            rj = r[j]
+            if cd ≥ 2rj + δ + δ′
+                cdist[j, j′] = cd - δ - δ′
+                @assert cdist[j, j′] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j, j′], √_cost(centroids[:,j′], centroids[:,j])
+            else
+                @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                cdist[j, j′] = cd
+            end
+        end
+        fill!(nstable, false)
+        old_nj = Int[]
+        sizehint!(old_nj, k)
+        @inbounds for j = 1:k
+            nj = neighb[j]
+            resize!(old_nj, length(nj))
+            copy!(old_nj, nj)
+            sort!(old_nj)
+            empty!(nj)
+            for j′ = 1:k
+                j′ == j && continue
+                cdist[j, j′] < 2r[j] && push!(nj, j′)
+            end
+            nj == old_nj && (nstable[j] = true)
+            sort!(nj, by=j′->cdist[j,j′])
+        end
+        return config
+    end
+
     global function clear_cache!()
         empty!(centroidsdict)
         empty!(centroidsthrdict)
         empty!(zsdict)
         empty!(zsthrdict)
     end
+end
+
+function check_empty!(config::Configuration{Naive}, data::Matrix{Float64})
+    @extract config: m k n c costs centroids csizes
+    nonempty = csizes .> 0
+    num_nonempty = sum(nonempty)
+    num_centroids = min(config.n, config.k)
+    gap = num_centroids - num_nonempty
+    gap == 0 && return false
+    to_fill = findall(.~(nonempty))[1:gap]
+    for j in to_fill
+        local i::Int
+        while true
+            i = rand(1:n)
+            csizes[c[i]] > 1 && break
+        end
+        ci = c[i]
+        z = csizes[ci]
+        datai = @view data[:,i]
+        y = @view centroids[:,ci]
+        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
+        csizes[ci] -= 1
+        config.cost -= costs[i]
+        centroids[:,j] .= data[:,i]
+        c[i] = j
+        csizes[j] = 1
+        costs[i] = 0.0
+    end
+    return true
 end
 
 function check_empty!(config::Configuration{ReducedComparison}, data::Matrix{Float64})
@@ -252,6 +558,38 @@ function check_empty!(config::Configuration{ReducedComparison}, data::Matrix{Flo
     num_centroids = min(config.n, config.k)
     gap = num_centroids - num_nonempty
     gap == 0 && return false
+    to_fill = findall(.~(nonempty))[1:gap]
+    for j in to_fill
+        local i::Int
+        while true
+            i = rand(1:n)
+            csizes[c[i]] > 1 && break
+        end
+        ci = c[i]
+        z = csizes[ci]
+        datai = @view data[:,i]
+        y = @view centroids[:,ci]
+        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
+        csizes[ci] -= 1
+        config.cost -= costs[i]
+        centroids[:,j] .= data[:,i]
+        c[i] = j
+        csizes[j] = 1
+        active[j] = true
+        costs[i] = 0.0
+    end
+    return true
+end
+
+function check_empty!(config::Configuration{KBall}, data::Matrix{Float64})
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc r cdist stable
+    nonempty = csizes .> 0
+    num_nonempty = sum(nonempty)
+    num_centroids = min(config.n, config.k)
+    gap = num_centroids - num_nonempty
+    gap == 0 && return false
+    error() # TODO !!!
     to_fill = findall(.~(nonempty))[1:gap]
     for j in to_fill
         local i::Int
@@ -1048,6 +1386,7 @@ function kmeans(
         kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS(),
         verbose::Bool = true,
         tol::Float64 = 1e-5,
+        accel::Type{<:Accelerator} = ReducedComparison,
         logfile::AbstractString = "",
     )
 
@@ -1074,7 +1413,7 @@ function kmeans(
     DataLogging.@log "INPUTS m: $m n: $n k: $k seed: $seed"
 
     if kmseeder isa KMeansSeeder
-        config = init_centroids(kmseeder, data, k, ReducedComparison)
+        config = init_centroids(kmseeder, data, k, accel)
     else
         centroids = kmseeder
         size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
