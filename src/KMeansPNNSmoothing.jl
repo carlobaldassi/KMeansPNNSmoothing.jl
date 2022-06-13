@@ -58,7 +58,7 @@ function reset!(centroids::Matrix{Float64}, a::KBall)
     a.δc .= zeros(k)
     fill!(a.r, Inf)
     @inbounds for j = 1:k, i = 1:k
-        cdist[i,j] = √_cost(centroids[:,i], centroids[:,j])
+        a.cdist[i,j] = √_cost(centroids[:,i], centroids[:,j])
     end
     a.neighb .= [deleteat!(collect(1:k), j) for j = 1:k]
     fill!(a.stable, false)
