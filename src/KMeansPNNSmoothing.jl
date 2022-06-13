@@ -380,34 +380,55 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    num_chgd_th = zeros(Int, Threads.nthreads())
-
-    t = @elapsed Threads.@threads for i in 1:n
-        @inbounds begin
-            ci = c[i]
-            lbi, ubi = lb[i], ub[i]
-            r = s[ci] / 2
-            lbr = max(lbi, r)
-            lbr > ubi && continue
-            @views v = _cost(data[:,i], centroids[:,ci])
-            costs[i] = v
-            ub[i] = √v
-            lbr > ub[i] && continue
-
-            v1, v2, x1, x2 = Inf, Inf, 0, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                if v′ < v1
-                    v2, x2 = v1, x1
-                    v1, x1 = v′, j
-                elseif v′ < v2
-                    v2, x2 = v′, j
+    if any(c .== 0)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                v1, v2, x1 = Inf, Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    if v′ < v1
+                        v2 = v1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2 = v′
+                    end
                 end
+                costs[i], c[i] = v1, x1
+                ub[i] = √v1
+                lb[i] = √v2
             end
-            x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-            costs[i], c[i] = v1, x1
-            ub[i], lb[i] = √v1, √v2
         end
+        num_chgd = n
+    else
+        num_chgd_th = zeros(Int, Threads.nthreads())
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                lbi, ubi = lb[i], ub[i]
+                r = s[ci] / 2
+                lbr = max(lbi, r)
+                lbr > ubi && continue
+                @views v = _cost(data[:,i], centroids[:,ci])
+                costs[i] = v
+                ub[i] = √v
+                lbr > ub[i] && continue
+
+                v1, v2, x1, x2 = Inf, Inf, 0, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    if v′ < v1
+                        v2, x2 = v1, x1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2, x2 = v′, j
+                    end
+                end
+                x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+                costs[i], c[i] = v1, x1
+                ub[i], lb[i] = √v1, √v2
+            end
+        end
+        num_chgd = sum(num_chgd_th)
     end
     cost = sum(costs)
     fill!(csizes, 0)
@@ -415,7 +436,6 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
         ci = c[i]
         csizes[ci] += 1
     end
-    num_chgd = sum(num_chgd_th)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
