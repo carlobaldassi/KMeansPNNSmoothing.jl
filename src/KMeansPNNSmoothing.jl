@@ -116,6 +116,49 @@ function reset!(centroids::Matrix{Float64}, a::SHam)
     return a
 end
 
+struct SElk <: Accelerator
+    δc::Vector{Float64}
+    lb::Matrix{Float64}
+    ub::Vector{Float64}
+    function SElk(centroids::Matrix{Float64}, n::Int)
+        m, k = size(centroids)
+        δc = zeros(k)
+        lb = zeros(k, n)
+        ub = fill(Inf, n)
+        return new(δc, lb, ub)
+    end
+end
+
+function reset!(centroids::Matrix{Float64}, a::SElk)
+    m, k = size(centroids)
+    fill!(a.δc, 0.0)
+    fill!(a.lb, 0.0)
+    fill!(a.ub, Inf)
+    return a
+end
+
+
+struct SSElk <: Accelerator
+    δc::Vector{Float64}
+    lb::Matrix{Float64}
+    lbt::BitMatrix
+    function SSElk(centroids::Matrix{Float64}, n::Int)
+        m, k = size(centroids)
+        δc = zeros(k)
+        lb = zeros(k, n)
+        lbt = falses(k, n)
+        return new(δc, lb, lbt)
+    end
+end
+
+function reset!(centroids::Matrix{Float64}, a::SSElk)
+    m, k = size(centroids)
+    fill!(a.δc, 0.0)
+    fill!(a.lb, 0.0)
+    fill!(a.lbt, false)
+    return a
+end
+
 
 mutable struct Configuration{A<:Accelerator}
     m::Int
@@ -537,6 +580,163 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
     return num_chgd
 end
 
+function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb ub
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SElk accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    if any(c .== 0)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                lbi = @view lb[:,i]
+                v, x = Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    lbi[j] = √v′
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+                costs[i], c[i] = v, x
+                ub[i] = √v
+            end
+        end
+        num_chgd = n
+    else
+        num_chgd_th = zeros(Int, Threads.nthreads())
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                ubi = ub[i]
+                lbi = @view lb[:,i]
+
+                tight = false
+                v, x = Inf, 0
+                for j in 1:k
+                    lbij = lbi[j]
+                    lbij > ubi && continue
+                    if !tight
+                        v′′ = _cost(data[:,i], centroids[:,ci])
+                        sv = √v′′
+                        ubi = sv
+                        lbi[ci] = sv
+                        tight = true
+                        if v′′ < v
+                            v, x = v′′, ci
+                        end
+                        lbij > ubi && continue
+                    end
+                    if j ≠ ci || !tight
+                        @views v′ = _cost(data[:,i], centroids[:,j])
+                        lbi[j] = √v′
+                        if v′ < v
+                            v, x = v′, j
+                            ubi = √v′
+                        end
+                    end
+                end
+                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+                costs[i], c[i] = v, x
+                ub[i] = √v
+            end
+        end
+        num_chgd = sum(num_chgd_th)
+    end
+    cost = sum(costs)
+    fill!(csizes, 0)
+    for i in 1:n
+        ci = c[i]
+        csizes[ci] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb lbt
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SSelk accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    if any(c .== 0)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                lbi = @view lb[:,i]
+                lbti = @view lbt[:,i]
+                v, x = Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    lbi[j] = √v′
+                    lbti[j] = true
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+                costs[i], c[i] = v, x
+            end
+        end
+        num_chgd = n
+    else
+        num_chgd_th = zeros(Int, Threads.nthreads())
+
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                v = _cost(data[:,i], centroids[:,ci])
+                lbi = @view lb[:,i]
+                lbti = @view lbt[:,i]
+                ubi = √v
+                lbi[ci] = ubi
+                lbti[ci] = true
+
+                x = ci
+                for j in 1:k
+                    j == ci && continue
+                    lbij = lbi[j]
+                    lbij > ubi && continue
+                    if lbti[j]
+                        v′ = lbij^2
+                    else
+                        @views v′ = _cost(data[:,i], centroids[:,j])
+                        lbi[j] = √v′
+                        lbti[j] = true
+                    end
+                    if v′ < v
+                        v, x = v′, j
+                        ubi = √v′
+                    end
+                end
+                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+                costs[i], c[i] = v, x
+            end
+        end
+        num_chgd = sum(num_chgd_th)
+    end
+    cost = sum(costs)
+    fill!(csizes, 0)
+    for i in 1:n
+        ci = c[i]
+        csizes[ci] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
 function sync_costs!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -553,6 +753,29 @@ function sync_costs!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::U
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
             ub[i] = √v
+        end
+    end
+    config.cost = sum(costs)
+    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@pop_prefix!
+    return config
+end
+
+function sync_costs!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: lb ub
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SElk accelerator method")
+
+    DataLogging.@push_prefix! "SYNC"
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            ub[i] = √v
+            lb[ci,i] = √v
         end
     end
     config.cost = sum(costs)
@@ -946,6 +1169,138 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 end
             end
         end
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: δc lb ub
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with KBall accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                # stable[j] && continue
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += data[l,i]
+                end
+                zs_thr[id][j] += 1
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        δc .= 0.0
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+
+        @inbounds for i = 1:n
+            ci = c[i]
+            ub[i] += δc[ci]
+            lbi = @view lb[:,i]
+            for j = 1:k
+                lbi[j] -= δc[j]
+            end
+        end
+
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: δc lb lbt
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with KBall accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                # stable[j] && continue
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += data[l,i]
+                end
+                zs_thr[id][j] += 1
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        δc .= 0.0
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+
+        @inbounds for i = 1:n
+            ci = c[i]
+            lbi = @view lb[:,i]
+            lbti = @view lbt[:,i]
+            for j = 1:k
+                δc[j] == 0 && continue
+                lbi[j] -= δc[j]
+                lbti[j] = false
+            end
+        end
+
         return config
     end
 
