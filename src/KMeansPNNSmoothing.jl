@@ -93,6 +93,30 @@ function reset!(centroids::Matrix{Float64}, a::Hamerly)
 end
 
 
+struct SHam <: Accelerator
+    δc::Vector{Float64}
+    lb::Vector{Float64}
+    s::Vector{Float64}
+    function SHam(centroids::Matrix{Float64}, n::Int)
+        m, k = size(centroids)
+        δc = zeros(k)
+        lb = zeros(n)
+        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
+        return new(δc, lb, s)
+    end
+end
+
+function reset!(centroids::Matrix{Float64}, a::SHam)
+    m, k = size(centroids)
+    a.δc .= zeros(k)
+    fill!(a.lb, 0.0)
+    @inbounds for j = 1:k
+        a.s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
+    end
+    return a
+end
+
+
 mutable struct Configuration{A<:Accelerator}
     m::Int
     k::Int
@@ -443,6 +467,76 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     return num_chgd
 end
 
+function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb s
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SHam accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    if any(c .== 0)
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                v1, v2, x1 = Inf, Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    if v′ < v1
+                        v2 = v1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2 = v′
+                    end
+                end
+                costs[i], c[i] = v1, x1
+                lb[i] = √v2
+            end
+        end
+        num_chgd = n
+    else
+        num_chgd_th = zeros(Int, Threads.nthreads())
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                @views v = _cost(data[:,i], centroids[:,ci])
+                costs[i] = v
+                lbi = lb[i]
+                r = s[ci] / 2
+                lbr = max(lbi, r)
+                lbr > √v && continue
+
+                v1, v2, x1 = Inf, Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    if v′ < v1
+                        v2 = v1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2 = v′
+                    end
+                end
+                x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+                costs[i], c[i] = v1, x1
+                lb[i] = √v2
+            end
+        end
+        num_chgd = sum(num_chgd_th)
+    end
+    cost = sum(costs)
+    fill!(csizes, 0)
+    for i in 1:n
+        ci = c[i]
+        csizes[ci] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
 function sync_costs!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -760,6 +854,87 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         # @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
         # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
         # @assert all(maximum(mat[j,c.==j]) ≈ r[j] for j = 1:k) filter(x->!(x[1]≈x[2]), [(maximum(mat[j,c.==j]),r[j]) for j = 1:k])
+
+        @inbounds for j = 1:k
+            s[j] = Inf
+            for j′ = 1:k
+                j′ == j && continue
+                @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                if cd < s[j]
+                    s[j] = cd
+                end
+            end
+        end
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{SHam}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: δc lb s
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with KBall accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                # stable[j] && continue
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += data[l,i]
+                end
+                zs_thr[id][j] += 1
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        δc .= 0.0
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            # stable[j] && continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+        δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
+        @inbounds for j = 1:k
+            δcj = δc[j]
+            if δcj > δcₘ
+                δcₛ = δcₘ
+                δcₘ, jₘ = δcj, j
+            elseif δcj > δcₛ
+                δcₛ = δcj
+            end
+        end
+        @inbounds for i = 1:n
+            ci = c[i]
+            lb[i] -= (ci == jₘ ? δcₛ : δcₘ)
+        end
 
         @inbounds for j = 1:k
             s[j] = Inf
