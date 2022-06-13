@@ -180,6 +180,8 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    num_chgd_th = zeros(Int, Threads.nthreads())
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             wi = w ≡ nothing ? 1 : w[i]
@@ -190,6 +192,7 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
                     v, x = v′, j
                 end
             end
+            x ≠ c[i] && (num_chgd_th[Threads.threadid()] += 1)
             costs[i], c[i] = v, x
         end
     end
@@ -198,11 +201,12 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
     for i in 1:n
         csizes[c[i]] += 1
     end
+    num_chgd = sum(num_chgd_th)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
     DataLogging.@pop_prefix!
-    return config
+    return num_chgd
 end
 
 function partition_from_centroids!(config::Configuration{ReducedComparison}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -216,9 +220,8 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     active_inds = findall(active)
     all_inds = collect(1:k)
 
-    fill!(csizes, 0)
-
     num_fullsearch_th = zeros(Int, Threads.nthreads())
+    num_chgd_th = zeros(Int, Threads.nthreads())
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
@@ -240,20 +243,23 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
                     v, x = v′, j
                 end
             end
+            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
             costs[i], c[i] = v, x
         end
     end
     cost = sum(costs)
+    fill!(csizes, 0)
     for i in 1:n
         ci = c[i]
         csizes[ci] += 1
     end
     num_fullsearch = sum(num_fullsearch_th)
+    num_chgd = sum(num_chgd_th)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
     DataLogging.@pop_prefix!
-    return config
+    return num_chgd
 end
 
 function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -272,7 +278,6 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         new_stable = falses(k)
         t = @elapsed Threads.@threads for i in 1:n
             @inbounds begin
-                ci = c[i]
                 v, x = Inf, 0
                 for j in 1:k
                     @views v′ = _cost(data[:,i], centroids[:,j])
@@ -283,7 +288,9 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 costs[i], c[i] = v, x
             end
         end
+        num_chgd = n
     else
+        num_chgd_th = zeros(Int, Threads.nthreads())
         new_stable = trues(k)
         sorted_neighb = copy.(neighb)
         did_sort = falses(k)
@@ -325,10 +332,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 if x ≠ ci
                     new_stable[ci] = false
                     new_stable[x] = false
+                    num_chgd_th[Threads.threadid()] += 1
                 end
                 costs[i], c[i] = v, x
             end
         end
+        num_chgd = sum(num_chgd_th)
     end
     # # XXX
     # @inbounds for i in 1:n
@@ -358,7 +367,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
     DataLogging.@pop_prefix!
-    return config
+    return num_chgd
 end
 
 function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -371,27 +380,19 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    # t = @elapsed Threads.@threads for i in 1:n
-    t = @elapsed for i in 1:n
+    num_chgd_th = zeros(Int, Threads.nthreads())
+
+    t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
             lbi, ubi = lb[i], ub[i]
             r = s[ci] / 2
             lbr = max(lbi, r)
-            whs1, whs2 = false, false
-            # lbr > ubi && continue
-            if lbr > ubi
-                whs1 = true
-            else
-                @views v = _cost(data[:,i], centroids[:,ci])
-                costs[i] = v
-                @assert √v ≤ ub[i]
-                ub[i] = √v
-                # lbr > ub[i] && continue
-                if lbr > ub[i]
-                    whs2 = true
-                end
-            end
+            lbr > ubi && continue
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            ub[i] = √v
+            lbr > ub[i] && continue
 
             v1, v2, x1, x2 = Inf, Inf, 0, 0
             for j in 1:k
@@ -403,16 +404,9 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
                     v2, x2 = v′, j
                 end
             end
-            if !(whs1 || whs2)
-                costs[i], c[i] = v1, x1
-                ub[i], lb[i] = √v1, √v2
-            else
-                @assert ub[i] ≥ √v1
-                @assert lb[i] ≤ √v2
-                @assert x1 == ci
-                costs[i] = v1 # XXX
-            end
-            # @show i,ub[i],lb[i]
+            x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            costs[i], c[i] = v1, x1
+            ub[i], lb[i] = √v1, √v2
         end
     end
     cost = sum(costs)
@@ -421,12 +415,38 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
         ci = c[i]
         csizes[ci] += 1
     end
+    num_chgd = sum(num_chgd_th)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
     DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
+
+function sync_costs!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: ub
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+
+    DataLogging.@push_prefix! "SYNC"
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            ub[i] = √v
+        end
+    end
+    config.cost = sum(costs)
+    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@pop_prefix!
     return config
 end
+
 
 
 let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
@@ -1677,15 +1697,27 @@ function lloyd!(
         centroids_from_partition!(config, data, w)
         old_cost = config.cost
         found_empty = check_empty!(config, data)
-        partition_from_centroids!(config, data, w)
+        num_chgd = partition_from_centroids!(config, data, w)
         new_cost = config.cost
-        DataLogging.@log "it: $it cost: $(config.cost)$(found_empty ? "[found_empty]" : ""))"
+        synched = false
         if new_cost ≥ old_cost * (1 - tol) && !found_empty
+            old_new_cost = new_cost
+            sync_costs!(config, data, w)
+            new_cost = config.cost
+            # println(" > syncing $old_new_cost -> $new_cost")
+            synched = (new_cost ≠ old_new_cost)
+        end
+        DataLogging.@log "it: $it cost: $(config.cost) num_chgd: $(num_chgd)$(found_empty ? " [found_empty]" : "")$(synched ? " [synched]" : "")"
+        if num_chgd == 0 || (new_cost ≥ old_cost * (1 - tol) && !found_empty && !synched)
+            if !synched
+                sync_costs!(config, data, w)
+                new_cost = config.cost
+            end
             verbose && println("converged cost = $new_cost")
             converged = true
             break
         end
-        verbose && println("lloyd it = $it cost = $new_cost")
+        verbose && println("lloyd it = $it cost = $new_cost num_chgd = $num_chgd" * (synched ? " [synched]" : ""))
     end
     DataLogging.@log "DONE time: $t iters: $it converged: $converged cost0: $cost0 cost1: $(config.cost)"
     DataLogging.@pop_prefix!
