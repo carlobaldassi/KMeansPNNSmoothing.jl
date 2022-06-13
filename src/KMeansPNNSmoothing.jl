@@ -782,8 +782,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
     end
 end
 
-function check_empty!(config::Configuration{Naive}, data::Matrix{Float64})
-    @extract config: m k n c costs centroids csizes
+function check_empty!(config::Configuration, data::Matrix{Float64})
+    @extract config: m k n c costs centroids csizes accel
     nonempty = csizes .> 0
     num_nonempty = sum(nonempty)
     num_centroids = min(config.n, config.k)
@@ -808,126 +808,10 @@ function check_empty!(config::Configuration{Naive}, data::Matrix{Float64})
         csizes[j] = 1
         costs[i] = 0.0
     end
+    reset!(centroids, accel)
     return true
 end
 
-function check_empty!(config::Configuration{ReducedComparison}, data::Matrix{Float64})
-    @extract config: m k n c costs centroids csizes accel
-    @extract accel: active
-    nonempty = csizes .> 0
-    num_nonempty = sum(nonempty)
-    num_centroids = min(config.n, config.k)
-    gap = num_centroids - num_nonempty
-    gap == 0 && return false
-    to_fill = findall(.~(nonempty))[1:gap]
-    for j in to_fill
-        local i::Int
-        while true
-            i = rand(1:n)
-            csizes[c[i]] > 1 && break
-        end
-        ci = c[i]
-        z = csizes[ci]
-        datai = @view data[:,i]
-        y = @view centroids[:,ci]
-        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
-        csizes[ci] -= 1
-        config.cost -= costs[i]
-        centroids[:,j] .= data[:,i]
-        c[i] = j
-        csizes[j] = 1
-        active[j] = true
-        costs[i] = 0.0
-    end
-    return true
-end
-
-function check_empty!(config::Configuration{KBall}, data::Matrix{Float64})
-    @extract config: m k n c costs centroids csizes accel
-    @extract accel: δc r cdist neighb stable nstable
-    nonempty = csizes .> 0
-    num_nonempty = sum(nonempty)
-    num_centroids = min(config.n, config.k)
-    gap = num_centroids - num_nonempty
-    gap == 0 && return false
-    to_fill = findall(.~(nonempty))[1:gap]
-    for j in to_fill
-        local i::Int
-        while true
-            i = rand(1:n)
-            csizes[c[i]] > 1 && break
-        end
-        ci = c[i]
-        z = csizes[ci]
-        datai = @view data[:,i]
-        y = @view centroids[:,ci]
-        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
-        csizes[ci] -= 1
-        config.cost -= costs[i]
-
-        δc[j] += √_cost(centroids[:,j], datai)
-        centroids[:,j] .= datai
-        c[i] = j
-        csizes[j] = 1
-
-        r[j] = 0.0
-        for j′ = 1:k
-            cd = @views √_cost(centroids[:,j′], centroids[:,j])
-            cdist[j′,j] = cd
-            cdist[j,j′] = cd
-        end
-        empty!(neighb[j])
-        stable[j] = false
-        nstable[j] = false
-
-        costs[i] = 0.0
-    end
-    return true
-end
-
-function check_empty!(config::Configuration{Hamerly}, data::Matrix{Float64})
-    @extract config: m k n c costs centroids csizes accel
-    @extract accel: δc lb ub s
-    nonempty = csizes .> 0
-    num_nonempty = sum(nonempty)
-    num_centroids = min(config.n, config.k)
-    gap = num_centroids - num_nonempty
-    gap == 0 && return false
-    error() # XXX TODO
-    to_fill = findall(.~(nonempty))[1:gap]
-    for j in to_fill
-        local i::Int
-        while true
-            i = rand(1:n)
-            csizes[c[i]] > 1 && break
-        end
-        ci = c[i]
-        z = csizes[ci]
-        datai = @view data[:,i]
-        y = @view centroids[:,ci]
-        centroids[:,ci] .= (z .* y - datai) ./ (z - 1)
-        csizes[ci] -= 1
-        config.cost -= costs[i]
-
-        δc[j] += √_cost(centroids[:,j], datai)
-        centroids[:,j] .= datai
-        c[i] = j
-        csizes[j] = 1
-
-        r[j] = 0.0
-        for j′ = 1:k
-            cd = @views √_cost(centroids[:,j′], centroids[:,j])
-            cdist[j′,j] = cd
-            cdist[j,j′] = cd
-        end
-        empty!(neighb[j])
-        stable[j] = false
-        nstable[j] = false
-
-        costs[i] = 0.0
-    end
-    return true
-end
 
 """
 A `KMeansSeeder` object is used to specify the seeding algorithm.
