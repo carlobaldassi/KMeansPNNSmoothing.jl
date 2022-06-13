@@ -322,6 +322,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     cost = sum(costs)
     # cost′ = sum(@views _cost(data[:,i], centroids[:,c[i]]) for i = 1:n) # XXX
     # @assert cost ≈ cost′
+    fill!(csizes, 0)
     for i in 1:n
         ci = c[i]
         csizes[ci] += 1
