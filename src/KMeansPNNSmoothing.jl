@@ -163,6 +163,48 @@ function reset!(centroids::Matrix{Float64}, a::SSElk)
 end
 
 
+function gen_groups(k, G)
+    b = k÷G
+    r = k - b*G
+    # gr = [(1:(b+(f≤r))) .+ (f≤r ? (b+1)*(f-1) : (b+1)*r + b*(f-r-1)) for f = 1:G]
+    groups = [(1:(b+(f≤r))) .+ ((b+1)*(f-1) - max(f-r-1,0)) for f = 1:G]
+    @assert vcat(groups...) == 1:k gr,vcat(groups...),1:k
+    return groups
+end
+
+struct Yinyang <: Accelerator
+    G::Int
+    δc::Vector{Float64}
+    ub::Vector{Float64}
+    groups::Vector{UnitRange{Int}}
+    gind::Vector{Int}
+    q::Vector{Float64}
+    lb::Matrix{Float64}
+    function Yinyang(centroids::Matrix{Float64}, n::Int)
+        m, k = size(centroids)
+        G = max(1, round(Int, k / 10))
+        δc = zeros(k)
+        ub = fill(Inf, n)
+        groups = gen_groups(k, G)
+        gind = zeros(Int, n)
+        q = zeros(G)
+        lb = zeros(G, n)
+        return new(G, δc, ub, groups, gind, q, lb)
+    end
+end
+
+function reset!(centroids::Matrix{Float64}, a::Yinyang)
+    m, k = size(centroids)
+    fill!(a.δc, 0.0)
+    fill!(a.ub, Inf)
+    fill!(a.gind, 0)
+    fill!(a.q, 0.0)
+    fill!(a.lb, 0.0)
+    return a
+end
+
+
+
 mutable struct Configuration{A<:Accelerator}
     m::Int
     k::Int
@@ -761,9 +803,117 @@ function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Fl
     return num_chgd
 end
 
+function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: G δc ub groups gind q lb
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Yinyang accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    if any(c .== 0)
+        costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+        t = @elapsed Threads.@threads for i in 1:n
+            costsij = costsij_th[Threads.threadid()]
+            @inbounds begin
+                v, x = Inf, 0
+                for j in 1:k
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    costsij[j] = v′
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+                costs[i], c[i] = v, x
+                ub[i] = √v
+                gind[i] = findfirst(gr->x ∈ gr, groups)
+                lbi = @view lb[:,i]
+                for (f,gr) in enumerate(groups)
+                    lbi[f] = √minimum(costsij[j] for j in gr if j ≠ x)
+                end
+            end
+        end
+        num_chgd = n
+    else
+        @assert all(1 .≤ gind .≤ G)
+        num_chgd_th = zeros(Int, Threads.nthreads())
+        t = @elapsed Threads.@threads for i in 1:n
+            @inbounds begin
+                ci = c[i]
+                fi = gind[i]
+                @assert 1 ≤ ci ≤ k
+                @assert 1 ≤ fi ≤ G
+                ubi = ub[i]
+                lbi = @view lb[:,i]
+                minimum(lbi) > ubi && continue
+
+                tight = false
+                v, x = Inf, 0
+                for (f,gr) in enumerate(groups)
+                    lbi[f] > ubi && continue
+                    if !tight
+                        @assert v == Inf
+                        v = _cost(data[:,i], centroids[:,ci])
+                        sv = √v
+                        ubi = sv
+                        tight = true
+                        x = ci
+                        lbi[f] > ubi && continue
+                    end
+                    @assert tight
+                    v1, v2, x1 = Inf, Inf, 0
+                    for j in gr
+                        j == x && continue
+                        @views v′ = _cost(data[:,i], centroids[:,j])
+                        if v′ < v1
+                            v2 = v1
+                            v1, x1 = v′, j
+                        elseif v′ < v2
+                            v2 = v′
+                        end
+                    end
+                    if v1 < v
+                        @assert x1 ≠ x
+                        lbi[f] = √v2
+                        if f ≠ fi
+                            lbi[fi] = min(lbi[fi], ubi)
+                            fi = f
+                        else
+                            lbi[f] = min(lbi[f], √v)
+                        end
+                        v, x = v1, x1
+                        ubi = √v
+                    else
+                        lbi[f] = √v1
+                    end
+                end
+                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+                @assert 1 ≤ x ≤ k
+                costs[i], c[i] = v, x
+                gind[i] = fi
+                ub[i] = ubi
+            end
+        end
+        num_chgd = sum(num_chgd_th)
+    end
+    cost = sum(costs)
+    fill!(csizes, 0)
+    for i in 1:n
+        ci = c[i]
+        csizes[ci] += 1
+    end
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
-function sync_costs!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
     @extract accel: ub
     @assert size(data) == (m, n)
@@ -1326,6 +1476,83 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
 
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: G δc ub groups gind q lb
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with KBall accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
+            [zeros(Float64, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        foreach(z->fill!(z, 0.0), zs_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                # stable[j] && continue
+                id = Threads.threadid()
+                nc = new_centroids_thr[id]
+                for l = 1:m
+                    nc[l,j] += data[l,i]
+                end
+                zs_thr[id][j] += 1
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        zs = zeros(k)
+        for zz in zs_thr
+            zs .+= zz
+        end
+        # Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
+        δc .= 0.0
+        @inbounds for j = 1:k
+            z = zs[j]
+            z > 0 || continue
+            # stable[j] && continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+        δcₘ, δcₛ, jₘ = zeros(G), zeros(G), zeros(Int, G)
+        for (f,gr) in enumerate(groups)
+            @inbounds for j in gr
+                δcj = δc[j]
+                if δcj > δcₘ[f]
+                    δcₛ[f] = δcₘ[f]
+                    δcₘ[f], jₘ[f] = δcj, j
+                elseif δcj > δcₛ[f]
+                    δcₛ[f] = δcj
+                end
+            end
+        end
+        @inbounds for i = 1:n
+            ci = c[i]
+            fi = gind[i]
+            ub[i] += δc[ci]
+            for f = 1:G
+                lb[f,i] -= (ci == jₘ[f] ? δcₛ[f] : δcₘ[f])
+            end
+        end
         return config
     end
 
