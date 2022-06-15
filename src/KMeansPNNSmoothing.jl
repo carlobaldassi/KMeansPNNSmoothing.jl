@@ -138,11 +138,11 @@ function reset!(centroids::Matrix{Float64}, a::SElk)
 end
 
 
-struct SSElk <: Accelerator
+struct RElk <: Accelerator
     δc::Vector{Float64}
     lb::Matrix{Float64}
     active::BitVector
-    function SSElk(centroids::Matrix{Float64}, n::Int)
+    function RElk(centroids::Matrix{Float64}, n::Int)
         m, k = size(centroids)
         δc = zeros(k)
         lb = zeros(k, n)
@@ -151,7 +151,7 @@ struct SSElk <: Accelerator
     end
 end
 
-function reset!(centroids::Matrix{Float64}, a::SSElk)
+function reset!(centroids::Matrix{Float64}, a::RElk)
     m, k = size(centroids)
     fill!(a.δc, 0.0)
     fill!(a.lb, 0.0)
@@ -175,18 +175,32 @@ struct Yinyang <: Accelerator
     ub::Vector{Float64}
     groups::Vector{UnitRange{Int}}
     gind::Vector{Int}
-    q::Vector{Float64}
     lb::Matrix{Float64}
     function Yinyang(centroids::Matrix{Float64}, n::Int)
         m, k = size(centroids)
         G = max(1, round(Int, k / 10))
         δc = zeros(k)
         ub = fill(Inf, n)
-        groups = gen_groups(k, G)
         gind = zeros(Int, n)
-        q = zeros(G)
         lb = zeros(G, n)
-        return new(G, δc, ub, groups, gind, q, lb)
+
+        if G > 1
+            result = kmeans(centroids, G; kmseeder=KMPlusPlus{1}(), verbose=true, accel=ReducedComparison)
+            groups = UnitRange{Int}[]
+            new_centroids = similar(centroids)
+            ind = 0
+            for f = 1:G
+                gr_inds = findall(result.labels .== f)
+                gr_size = length(gr_inds)
+                r = ind .+ (1:gr_size)
+                new_centroids[:,r] = centroids[:,gr_inds]
+                push!(groups, r)
+                ind += gr_size
+            end
+            # @assert vcat(groups...) == 1:k
+            centroids .= new_centroids
+        end
+        return new(G, δc, ub, groups, gind, lb)
     end
 end
 
@@ -195,7 +209,6 @@ function reset!(centroids::Matrix{Float64}, a::Yinyang)
     fill!(a.δc, 0.0)
     fill!(a.ub, Inf)
     fill!(a.gind, 0)
-    fill!(a.q, 0.0)
     fill!(a.lb, 0.0)
     return a
 end
@@ -698,7 +711,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
     return num_chgd
 end
 
-function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
     @extract accel: δc lb active
     @assert size(data) == (m, n)
@@ -784,7 +797,7 @@ end
 
 function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
-    @extract accel: G δc ub groups gind q lb
+    @extract accel: G δc ub groups gind lb
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with Yinyang accelerator method")
@@ -807,13 +820,25 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
                 end
                 costs[i], c[i] = v, x
                 ub[i] = √v
-                gind[i] = findfirst(gr->x ∈ gr, groups)
+                for (f,gr) in enumerate(groups)
+                    if last(gr) ≥ x
+                        gind[i] = f
+                        break
+                    end
+                end
                 lbi = @view lb[:,i]
                 for (f,gr) in enumerate(groups)
-                    lbi[f] = √minimum(costsij[j] for j in gr if j ≠ x)
+                    v′ = Inf
+                    for j in gr
+                        j == x && continue
+                        v′ = min(v′, costsij[j])
+                    end
+                    lbi[f] = √v′
                 end
             end
         end
+        # @show t
+        # @assert all(1 .≤ gind .≤ G)
         num_chgd = n
     else
         @assert all(1 .≤ gind .≤ G)
@@ -822,26 +847,30 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
             @inbounds begin
                 ci = c[i]
                 fi = gind[i]
-                @assert 1 ≤ ci ≤ k
-                @assert 1 ≤ fi ≤ G
+                # @assert 1 ≤ ci ≤ k
+                # @assert 1 ≤ fi ≤ G
                 ubi = ub[i]
                 lbi = @view lb[:,i]
-                minimum(lbi) > ubi && continue
+                skip = true
+                for lbif in lbi
+                    lbif ≤ ubi && (skip = false; break)
+                end
+                skip && continue
 
                 tight = false
                 v, x = Inf, 0
                 for (f,gr) in enumerate(groups)
                     lbi[f] > ubi && continue
                     if !tight
-                        @assert v == Inf
-                        v = _cost(data[:,i], centroids[:,ci])
+                        # @assert v == Inf
+                        @views v = _cost(data[:,i], centroids[:,ci])
                         sv = √v
                         ubi = sv
                         tight = true
                         x = ci
                         lbi[f] > ubi && continue
                     end
-                    @assert tight
+                    # @assert tight
                     v1, v2, x1 = Inf, Inf, 0
                     for j in gr
                         j == x && continue
@@ -1393,7 +1422,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         return config
     end
 
-    global function centroids_from_partition!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+    global function centroids_from_partition!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
         @extract accel: δc lb active
         @assert size(data) == (m, n)
@@ -1458,7 +1487,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: G δc ub groups gind q lb
+        @extract accel: G δc ub groups gind lb
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with KBall accelerator method")
@@ -1498,12 +1527,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         for zz in zs_thr
             zs .+= zz
         end
-        # Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
         δc .= 0.0
         @inbounds for j = 1:k
             z = zs[j]
             z > 0 || continue
-            # stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
