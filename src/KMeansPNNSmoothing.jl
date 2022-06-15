@@ -141,15 +141,13 @@ end
 struct SSElk <: Accelerator
     δc::Vector{Float64}
     lb::Matrix{Float64}
-    lbt::BitMatrix
     active::BitVector
     function SSElk(centroids::Matrix{Float64}, n::Int)
         m, k = size(centroids)
         δc = zeros(k)
         lb = zeros(k, n)
-        lbt = falses(k, n)
         active = trues(k)
-        return new(δc, lb, lbt, active)
+        return new(δc, lb, active)
     end
 end
 
@@ -157,7 +155,6 @@ function reset!(centroids::Matrix{Float64}, a::SSElk)
     m, k = size(centroids)
     fill!(a.δc, 0.0)
     fill!(a.lb, 0.0)
-    fill!(a.lbt, false)
     fill!(a.active, true)
     return a
 end
@@ -703,7 +700,7 @@ end
 
 function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
-    @extract accel: δc lb lbt active
+    @extract accel: δc lb active
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with SSelk accelerator method")
@@ -727,7 +724,6 @@ function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Fl
             end
         end
         num_chgd = n
-        fill!(lbt, true)
         fill!(active, true)
         num_fullsearch = n
     else
@@ -742,37 +738,25 @@ function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Fl
                 ci = c[i]
                 if active[ci]
                     old_v = costs[i]
-                    v = _cost(data[:,i], centroids[:,ci])
+                    @views v = _cost(data[:,i], centroids[:,ci])
                     fullsearch = (v > old_v)
                 else
                     v = costs[i]
                     fullsearch = false
                 end
                 lbi = @view lb[:,i]
-                lbti = @view lbt[:,i]
                 ubi = √v
                 if active[ci]
                     lbi[ci] = ubi
-                    lbti[ci] = true
-                # else
-                #     @assert lbi[ci] == ubi
-                #     @assert lbti[ci]
                 end
                 num_fullsearch_th[Threads.threadid()] += fullsearch
 
                 x = ci
                 inds = fullsearch ? all_inds : active_inds
                 for j in inds
-                    j == ci && continue
-                    lbij = lbi[j]
-                    lbij > ubi && continue
-                    if lbti[j]
-                        v′ = lbij^2
-                    else
-                        @views v′ = _cost(data[:,i], centroids[:,j])
-                        lbi[j] = √v′
-                        lbti[j] = true
-                    end
+                    (lbi[j] > ubi || j == ci) && continue
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    lbi[j] = √v′
                     if v′ < v
                         v, x = v′, j
                         ubi = √v′
@@ -1411,7 +1395,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{SSElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: δc lb lbt active
+        @extract accel: δc lb active
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with KBall accelerator method")
@@ -1462,14 +1446,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
-
         @inbounds for i = 1:n
             lbi = @view lb[:,i]
-            lbti = @view lbt[:,i]
-            for j = 1:k
-                δc[j] == 0 && continue
+            @simd for j in 1:k
                 lbi[j] -= δc[j]
-                lbti[j] = false
             end
         end
 
