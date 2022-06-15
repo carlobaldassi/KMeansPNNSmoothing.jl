@@ -660,34 +660,30 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
                 ubi = ub[i]
                 lbi = @view lb[:,i]
 
-                tight = false
-                v, x = Inf, 0
+                skip = true
+                for j = 1:k
+                    lbi[j] ≤ ubi && j ≠ ci && (skip = false; break)
+                end
+                skip && continue
+
+                @views v = _cost(data[:,i], centroids[:,ci])
+                x = ci
+                sv = √v
+                ubi = sv
+                lbi[ci] = sv
+
                 for j in 1:k
-                    lbij = lbi[j]
-                    lbij > ubi && continue
-                    if !tight
-                        v′′ = _cost(data[:,i], centroids[:,ci])
-                        sv = √v′′
-                        ubi = sv
-                        lbi[ci] = sv
-                        tight = true
-                        if v′′ < v
-                            v, x = v′′, ci
-                        end
-                        lbij > ubi && continue
-                    end
-                    if j ≠ ci || !tight
-                        @views v′ = _cost(data[:,i], centroids[:,j])
-                        lbi[j] = √v′
-                        if v′ < v
-                            v, x = v′, j
-                            ubi = √v′
-                        end
+                    (lbi[j] > ubi || j == ci) && continue
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    sv′ = √v′
+                    lbi[j] = sv′
+                    if v′ < v
+                        v, x = v′, j
+                        ubi = sv′
                     end
                 end
                 x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                costs[i], c[i] = v, x
-                ub[i] = √v
+                costs[i], c[i], ub[i] = v, x, ubi
             end
         end
         num_chgd = sum(num_chgd_th)
@@ -719,12 +715,10 @@ function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Fl
         t = @elapsed Threads.@threads for i in 1:n
             @inbounds begin
                 lbi = @view lb[:,i]
-                lbti = @view lbt[:,i]
                 v, x = Inf, 0
                 for j in 1:k
                     @views v′ = _cost(data[:,i], centroids[:,j])
                     lbi[j] = √v′
-                    lbti[j] = true
                     if v′ < v
                         v, x = v′, j
                     end
@@ -733,6 +727,7 @@ function partition_from_centroids!(config::Configuration{SSElk}, data::Matrix{Fl
             end
         end
         num_chgd = n
+        fill!(lbt, true)
         fill!(active, true)
         num_fullsearch = n
     else
@@ -1398,14 +1393,17 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
+        @inbounds for i = 1:n
+            ci = c[i]
+            lbi = @view lb[:,i]
+            @simd for j in 1:k
+                lbi[j] -= δc[j]
+            end
+        end
 
         @inbounds for i = 1:n
             ci = c[i]
             ub[i] += δc[ci]
-            lbi = @view lb[:,i]
-            for j = 1:k
-                lbi[j] -= δc[j]
-            end
         end
 
         return config
@@ -1466,7 +1464,6 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
 
         @inbounds for i = 1:n
-            ci = c[i]
             lbi = @view lb[:,i]
             lbti = @view lbt[:,i]
             for j = 1:k
