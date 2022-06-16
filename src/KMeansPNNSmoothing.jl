@@ -172,6 +172,9 @@ end
 struct Yinyang <: Accelerator
     G::Int
     δc::Vector{Float64}
+    δcₘ::Vector{Float64}
+    δcₛ::Vector{Float64}
+    jₘ::Vector{Float64}
     ub::Vector{Float64}
     groups::Vector{UnitRange{Int}}
     gind::Vector{Int}
@@ -180,6 +183,9 @@ struct Yinyang <: Accelerator
         m, k = size(centroids)
         G = max(1, round(Int, k / 10))
         δc = zeros(k)
+        δcₘ = zeros(G)
+        δcₛ = zeros(G)
+        jₘ = zeros(Int, G)
         ub = fill(Inf, n)
         gind = zeros(Int, n)
         lb = zeros(G, n)
@@ -200,13 +206,16 @@ struct Yinyang <: Accelerator
             # @assert vcat(groups...) == 1:k
             centroids .= new_centroids
         end
-        return new(G, δc, ub, groups, gind, lb)
+        return new(G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb)
     end
 end
 
 function reset!(centroids::Matrix{Float64}, a::Yinyang)
     m, k = size(centroids)
     fill!(a.δc, 0.0)
+    fill!(a.δcₘ, 0.0)
+    fill!(a.δcₛ, 0.0)
+    fill!(a.jₘ, 0)
     fill!(a.ub, Inf)
     fill!(a.gind, 0)
     fill!(a.lb, 0.0)
@@ -1487,7 +1496,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: G δc ub groups gind lb
+        @extract accel: G δc δcₘ δcₛ jₘ ub groups gind lb
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with KBall accelerator method")
@@ -1537,7 +1546,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
-        δcₘ, δcₛ, jₘ = zeros(G), zeros(G), zeros(Int, G)
+        # δcₘ, δcₛ, jₘ = zeros(G), zeros(G), zeros(Int, G)
+        fill!(δcₘ, 0.0)
+        fill!(δcₛ, 0.0)
+        fill!(jₘ, 0)
         for (f,gr) in enumerate(groups)
             @inbounds for j in gr
                 δcj = δc[j]
