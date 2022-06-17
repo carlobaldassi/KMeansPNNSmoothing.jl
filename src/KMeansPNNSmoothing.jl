@@ -7,6 +7,8 @@ using Statistics
 using StatsBase
 using ExtractMacro
 
+using DelimitedFiles
+
 include("DataLogging.jl")
 using .DataLogging
 
@@ -27,15 +29,34 @@ mutable struct Configuration{A<:Accelerator}
     centroids::Matrix{Float64}
     csizes::Vector{Int}
     accel::A
-    function Configuration{A}(m::Int, k::Int, n::Int, c::Vector{Int}, costs::Vector{Float64}, centroids::Matrix{Float64}) where {A<:Accelerator}
+
+    function Configuration{A}(data::Matrix{Float64}, c::Vector{Int}, costs::Vector{Float64}, centroids::Matrix{Float64}) where {A<:Accelerator}
+        m, n = size(data)
         @assert length(c) == n
         @assert length(costs) == n
-        @assert size(centroids) == (m, k)
+        k = size(centroids, 2)
+        @assert size(centroids, 1) == m
+        @assert all(1 .≤ c .≤ k)
+
         cost = sum(costs)
         csizes = zeros(Int, k)
         config = new{A}(m, k, n, c, cost, costs, centroids, csizes)
-        all(c .≠ 0) && update_csizes!(config)
+        update_csizes!(config)
         config.accel = A(config)
+        complete_initialization!(config, data)
+        return config
+    end
+    function Configuration{A}(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) where {A<:Accelerator}
+        m, n = size(data)
+        k = size(centroids, 2)
+        @assert size(centroids, 1) == m
+
+        c = zeros(Int, n)
+        costs = fill(Inf, n)
+        csizes = zeros(Int, k)
+        config = new{A}(m, k, n, c, 0.0, costs, centroids, csizes)
+        config.accel = A(config)
+        partition_from_centroids_from_scratch!(config, data, w)
         return config
     end
     function Base.copy(config::Configuration{A}) where {A<:Accelerator}
@@ -44,17 +65,6 @@ mutable struct Configuration{A<:Accelerator}
     end
 end
 
-function Configuration{A}(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) where {A<:Accelerator}
-    m, n = size(data)
-    k = size(centroids, 2)
-    @assert size(centroids, 1) == m
-
-    c = zeros(Int, n)
-    costs = fill(Inf, n)
-    config = Configuration{A}(m, k, n, c, costs, centroids)
-    partition_from_centroids!(config, data, w)
-    return config
-end
 
 include("accelerators.jl")
 
@@ -74,17 +84,51 @@ function update_csizes!(config::Configuration)
     end
 end
 
-function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+complete_initialization!(config::Configuration{<:Union{Naive,ReducedComparison,KBall,SHam,RElk}}, data::Matrix{Float64}) = config
+
+function complete_initialization!(config::Configuration{<:Union{Hamerly,SElk}}, data::Matrix{Float64})
+    @extract config: n costs accel
+    @extract accel: ub
+
+    @inbounds @simd for i = 1:n
+        ub[i] = √costs[i]
+    end
+
+    return config
+end
+
+function complete_initialization!(config::Configuration{Yinyang}, data::Matrix{Float64})
+    @extract config: n c costs accel
+    @extract accel: ub groups gind
+
+    @inbounds @simd for i = 1:n
+        ub[i] = √costs[i]
+    end
+    @inbounds for i = 1:n
+        ci = c[i]
+        for (f,gr) in enumerate(groups)
+            if last(gr) ≥ ci
+                gind[i] = f
+                break
+            end
+        end
+    end
+
+    return config
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Naive,ReducedComparison}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids
     @assert size(data) == (m, n)
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     num_chgd_th = zeros(Int, Threads.nthreads())
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
+            ci = c[i]
             wi = w ≡ nothing ? 1 : w[i]
             v, x = Inf, 0
             for j in 1:k
@@ -93,7 +137,7 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
                     v, x = v′, j
                 end
             end
-            x ≠ c[i] && (num_chgd_th[Threads.threadid()] += 1)
+            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
             costs[i], c[i] = v, x
         end
     end
@@ -107,6 +151,237 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
     return num_chgd
 end
 
+function partition_from_centroids_from_scratch!(config::Configuration{KBall}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: stable
+    @assert size(data) == (m, n)
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            wi = w ≡ nothing ? 1 : w[i]
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+        end
+    end
+    num_chgd = n
+    fill!(stable, false)
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: lb ub
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            v1, v2, x1 = Inf, Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                if v′ < v1
+                    v2 = v1
+                    v1, x1 = v′, j
+                elseif v′ < v2
+                    v2 = v′
+                end
+            end
+            costs[i], c[i] = v1, x1
+            ub[i] = √v1
+            lb[i] = √v2
+        end
+    end
+    num_chgd = n
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{SHam}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: lb
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SHam accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            v1, v2, x1 = Inf, Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                if v′ < v1
+                    v2 = v1
+                    v1, x1 = v′, j
+                elseif v′ < v2
+                    v2 = v′
+                end
+            end
+            costs[i], c[i] = v1, x1
+            lb[i] = √v2
+        end
+    end
+    num_chgd = n
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: ub lb
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SElk accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            lbi = @view lb[:,i]
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                lbi[j] = √v′
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+            ub[i] = √v
+        end
+    end
+    num_chgd = n
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: lb active
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with RElk accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            lbi = @view lb[:,i]
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                lbi[j] = √v′
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+        end
+    end
+    num_chgd = n
+    fill!(active, true)
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: ub groups gind lb
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with RElk accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    t = @elapsed Threads.@threads for i in 1:n
+        costsij = costsij_th[Threads.threadid()]
+        @inbounds begin
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                costsij[j] = v′
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+            ub[i] = √v
+            for (f,gr) in enumerate(groups)
+                if last(gr) ≥ x
+                    gind[i] = f
+                    break
+                end
+            end
+            lbi = @view lb[:,i]
+            for (f,gr) in enumerate(groups)
+                v′ = Inf
+                for j in gr
+                    j == x && continue
+                    v′ = min(v′, costsij[j])
+                end
+                lbi[f] = √v′
+            end
+        end
+    end
+    num_chgd = n
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+
+partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) =
+    partition_from_centroids_from_scratch!(config, data, w)
+
 function partition_from_centroids!(config::Configuration{ReducedComparison}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
     @extract accel: active
@@ -114,6 +389,8 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
 
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    @assert all(c .> 0)
 
     active_inds = findall(active)
     all_inds = collect(1:k)
@@ -124,18 +401,17 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
+            @assert ci > 0
             wi = w ≡ nothing ? 1 : w[i]
-            if ci > 0 && active[ci]
-                old_v′ = costs[i]
-                @views new_v′ = wi * _cost(data[:,i], centroids[:,ci])
-                fullsearch = (new_v′ > old_v′)
-            else
-                fullsearch = (ci == 0)
-            end
+            old_v = costs[i]
+            @views v = wi * _cost(data[:,i], centroids[:,ci])
+            fullsearch = active[ci] && (v > old_v)
             num_fullsearch_th[Threads.threadid()] += fullsearch
 
-            v, x, inds = fullsearch ? (Inf, 0, all_inds) : (costs[i], ci, active_inds)
+            inds = fullsearch ? all_inds : active_inds
+            x = ci
             for j in inds
+                j == ci && continue
                 @views v′ = wi * _cost(data[:,i], centroids[:,j])
                 if v′ < v
                     v, x = v′, j
@@ -166,23 +442,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     # all(c .> 0) && @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
 
     if any(c .== 0)
-        new_stable = falses(k)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                v, x = Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                end
-                costs[i], c[i] = v, x
-            end
-        end
-        num_chgd = n
+        error()
     else
         num_chgd_th = zeros(Int, Threads.nthreads())
         new_stable = trues(k)
@@ -270,25 +535,10 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     if any(c .== 0)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                v1, v2, x1 = Inf, Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    if v′ < v1
-                        v2 = v1
-                        v1, x1 = v′, j
-                    elseif v′ < v2
-                        v2 = v′
-                    end
-                end
-                costs[i], c[i] = v1, x1
-                ub[i] = √v1
-                lb[i] = √v2
-            end
-        end
-        num_chgd = n
+        error()
     else
         num_chgd_th = zeros(Int, Threads.nthreads())
         t = @elapsed Threads.@threads for i in 1:n
@@ -339,24 +589,10 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     if any(c .== 0)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                v1, v2, x1 = Inf, Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    if v′ < v1
-                        v2 = v1
-                        v1, x1 = v′, j
-                    elseif v′ < v2
-                        v2 = v′
-                    end
-                end
-                costs[i], c[i] = v1, x1
-                lb[i] = √v2
-            end
-        end
-        num_chgd = n
+        error()
     else
         num_chgd_th = zeros(Int, Threads.nthreads())
         t = @elapsed Threads.@threads for i in 1:n
@@ -405,23 +641,10 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     if any(c .== 0)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                lbi = @view lb[:,i]
-                v, x = Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    lbi[j] = √v′
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                end
-                costs[i], c[i] = v, x
-                ub[i] = √v
-            end
-        end
-        num_chgd = n
+        error()
     else
         num_chgd_th = zeros(Int, Threads.nthreads())
         t = @elapsed Threads.@threads for i in 1:n
@@ -477,24 +700,10 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     if any(c .== 0)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                lbi = @view lb[:,i]
-                v, x = Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    lbi[j] = √v′
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                end
-                costs[i], c[i] = v, x
-            end
-        end
-        num_chgd = n
-        fill!(active, true)
-        num_fullsearch = n
+        error()
     else
         num_chgd_th = zeros(Int, Threads.nthreads())
         num_fullsearch_th = zeros(Int, Threads.nthreads())
@@ -557,41 +766,10 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    @assert all(c .> 0)
+
     if any(c .== 0)
-        costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
-        t = @elapsed Threads.@threads for i in 1:n
-            costsij = costsij_th[Threads.threadid()]
-            @inbounds begin
-                v, x = Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    costsij[j] = v′
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                end
-                costs[i], c[i] = v, x
-                ub[i] = √v
-                for (f,gr) in enumerate(groups)
-                    if last(gr) ≥ x
-                        gind[i] = f
-                        break
-                    end
-                end
-                lbi = @view lb[:,i]
-                for (f,gr) in enumerate(groups)
-                    v′ = Inf
-                    for j in gr
-                        j == x && continue
-                        v′ = min(v′, costsij[j])
-                    end
-                    lbi[f] = √v′
-                end
-            end
-        end
-        # @show t
-        # @assert all(1 .≤ gind .≤ G)
-        num_chgd = n
+        error()
     else
         @assert all(1 .≤ gind .≤ G)
         num_chgd_th = zeros(Int, Threads.nthreads())
@@ -1345,7 +1523,7 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
         csizes[j] = 1
         costs[i] = 0.0
     end
-    reset!(accel)
+    reset!(accel) # TODO improve?
     return true
 end
 
@@ -1616,7 +1794,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int, A::Type
             c, new_c_best = new_c_best, c
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr)
+        Configuration{A}(data, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1676,7 +1854,7 @@ function init_centroids(::KMAFKMC2{L}, data::Matrix{Float64}, k::Int, A::Type{<:
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr)
+        Configuration{A}(data, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1750,7 +1928,7 @@ function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int, A::Type{
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr)
+        Configuration{A}(data, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1783,7 +1961,7 @@ function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int, A::Type{<:Acc
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr)
+        Configuration{A}(data, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1832,7 +2010,7 @@ function _get_nns(j, k, centroids, csizes)
 end
 
 
-function pairwise_nn!(config::Configuration{A}, tgt_k::Int) where {A<:Accelerator}
+function pairwise_nn(config::Configuration, tgt_k::Int, data::Matrix{Float64}, ::Type{A}) where {A<:Accelerator}
     @extract config : m k n centroids csizes
     DataLogging.@push_prefix! "PNN"
     DataLogging.@log "INPUTS k: $k tgt_k: $tgt_k"
@@ -1926,15 +2104,13 @@ function pairwise_nn!(config::Configuration{A}, tgt_k::Int) where {A<:Accelerato
         k -= 1
     end
 
-    config.k = k
-    config.centroids = centroids[:,1:k]
-    config.csizes = csizes[1:k]
-    @assert all(config.csizes .> 0)
-    config.accel = A(config.centroids, n)
-    fill!(config.c, 0) # reset in order for partition_from_centroids! to work
+    @assert all(csizes[1:k] .> 0)
+
+    mconfig = Configuration{A}(data, centroids[:,1:k])
 
     DataLogging.@log "DONE t_costs: $t_costs t_fuse: $t_fuse"
     DataLogging.@pop_prefix!
+    return mconfig
 end
 
 
@@ -1967,7 +2143,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int, A::Type{<:
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = inner_init(S, rdata, k, A)
-                lloyd!(config, rdata, 1_000, 1e-4, false)
+                lloyd!(config, rdata, 1_000, 0.0, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end
@@ -1986,9 +2162,8 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int, A::Type{<:
                 c_new[i] = configs[a].c[inds[a]] + k * (a-1)
                 costs_new[i] = configs[a].costs[inds[a]]
             end
-            mconfig = Configuration{A}(m, k * J, n, c_new, costs_new, centroids_new)
-            pairwise_nn!(mconfig, k)
-            partition_from_centroids!(mconfig, data)
+            jconfig = Configuration{Naive}(data, c_new, costs_new, centroids_new)
+            mconfig = pairwise_nn(jconfig, k, data, A)
             mconfig
         end
         DataLogging.@log "NNDONE time: $tnn"
@@ -2008,9 +2183,8 @@ function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int, A::Type{<:Accele
         centroids = copy(data)
         c = collect(1:n)
         costs = zeros(n)
-        config = Configuration{A}(m, n, n, c, costs, centroids)
-        pairwise_nn!(config, k)
-        partition_from_centroids!(config, data)
+        config0 = Configuration{Naive}(data, c, costs, centroids)
+        config = pairwise_nn(config0, k, data, A)
         config
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"

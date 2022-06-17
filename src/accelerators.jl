@@ -1,15 +1,15 @@
 struct Naive <: Accelerator
     config::Configuration
+    Naive(config::Configuration{Naive}) = new(config)
 end
 
-Naive(centroids::Matrix{Float64}, n::Int) = Naive()
 Base.copy(accel::Naive) = accel
 reset!(accel::Naive) = accel
 
 struct ReducedComparison <: Accelerator
     config::Configuration
     active::BitVector
-    ReducedComparison(config::Configuration) = new(config, trues(size(config.centroids,2)))
+    ReducedComparison(config::Configuration{ReducedComparison}) = new(config, trues(size(config.centroids,2)))
     Base.copy(accel::ReducedComparison) = new(accel.config, copy(accel.active))
 end
 
@@ -23,7 +23,7 @@ struct KBall <: Accelerator
     neighb::Vector{Vector{Int}}
     stable::BitVector
     nstable::BitVector
-    function KBall(config::Configuration)
+    function KBall(config::Configuration{KBall})
         @extract config : centroids
         m, k = size(centroids)
         δc = zeros(k)
@@ -60,7 +60,7 @@ struct Hamerly <: Accelerator
     lb::Vector{Float64}
     ub::Vector{Float64}
     s::Vector{Float64}
-    function Hamerly(config::Configuration)
+    function Hamerly(config::Configuration{Hamerly})
         @extract config : n k centroids
         δc = zeros(k)
         lb = zeros(n)
@@ -201,8 +201,13 @@ struct Yinyang <: Accelerator
         gind = zeros(Int, n)
         lb = zeros(G, n)
 
+        ## cluster the centroids
         if G > 1
-            result = kmeans(centroids, G; kmseeder=KMPlusPlus{1}(), verbose=true, accel=ReducedComparison)
+            ## we save/restore the RNG to make results comparable across accelerators
+            ## (especially relevant with KMPNNS seeders)
+            rng_bk = copy(Random.GLOBAL_RNG)
+            result = kmeans(centroids, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
+            copy!(Random.GLOBAL_RNG, rng_bk)
             groups = UnitRange{Int}[]
             new_centroids = similar(centroids)
             ind = 0
@@ -215,7 +220,7 @@ struct Yinyang <: Accelerator
                 ind += gr_size
             end
             # @assert vcat(groups...) == 1:k
-            centroids .= new_centroids
+            copy!(centroids, new_centroids)
         end
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb)
     end
@@ -226,14 +231,23 @@ struct Yinyang <: Accelerator
 
 end
 
-function reset!(config::Configuration)
+function reset!(accel::Yinyang)
     @extract accel : config δc δcₘ δcₛ jₘ ub gind lb
+    @extract config : c
     fill!(δc, 0.0)
     fill!(δcₘ, 0.0)
     fill!(δcₛ, 0.0)
     fill!(jₘ, 0)
     fill!(ub, Inf)
-    fill!(gind, 0)
+    @inbounds for i = 1:n
+        ci = c[i]
+        for (f,gr) in enumerate(groups)
+            if last(gr) ≥ ci
+                gind[i] = f
+                break
+            end
+        end
+    end
     fill!(lb, 0.0)
     return accel
 end
