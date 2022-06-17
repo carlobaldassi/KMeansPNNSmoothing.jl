@@ -121,16 +121,18 @@ struct SElk <: Accelerator
     δc::Vector{Float64}
     lb::Matrix{Float64}
     ub::Vector{Float64}
+    stable::BitVector
     function SElk(config::Configuration)
         @extract config : n k centroids
         δc = zeros(k)
         lb = zeros(k, n)
         ub = fill(Inf, n)
-        return new(config, δc, lb, ub)
+        stable = falses(k)
+        return new(config, δc, lb, ub, stable)
     end
     function Base.copy(accel::SElk)
-        @extract accel : config δc ls ub
-        return new(accel.config, copy(δc), copy(lb), copy(ub))
+        @extract accel : config δc ls ub stable
+        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(stable))
     end
 end
 
@@ -139,6 +141,7 @@ function reset!(accel::SElk)
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(ub, Inf)
+    fill!(stable, false)
     return accel
 end
 
@@ -148,16 +151,18 @@ struct RElk <: Accelerator
     δc::Vector{Float64}
     lb::Matrix{Float64}
     active::BitVector
+    stable::BitVector
     function RElk(config::Configuration)
         @extract config : n k
         δc = zeros(k)
         lb = zeros(k, n)
         active = trues(k)
-        return new(config, δc, lb, active)
+        stable = falses(k)
+        return new(config, δc, lb, active, stable)
     end
     function Base.copy(accel::RElk)
-        @extract accel : config δc lb active
-        return new(accel.config, copy(δc), copy(lb), copy(active))
+        @extract accel : config δc lb active stable
+        return new(accel.config, copy(δc), copy(lb), copy(active), copy(stable))
     end
 end
 
@@ -166,6 +171,7 @@ function reset!(accel::RElk)
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(active, true)
+    fill!(stable, false)
     return accel
 end
 

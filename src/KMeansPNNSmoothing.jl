@@ -156,15 +156,16 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
     @extract accel: stable
     @assert size(data) == (m, n)
 
+    w ≡ nothing || error("w unsupported with KBall accelerator method")
+
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            wi = w ≡ nothing ? 1 : w[i]
             v, x = Inf, 0
             for j in 1:k
-                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                @views v′ = _cost(data[:,i], centroids[:,j])
                 if v′ < v
                     v, x = v′, j
                 end
@@ -258,7 +259,7 @@ end
 
 function partition_from_centroids_from_scratch!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: ub lb
+    @extract accel: ub lb stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with SElk accelerator method")
@@ -282,6 +283,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
         end
     end
     num_chgd = n
+    fill!(stable, false)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -293,7 +295,7 @@ end
 
 function partition_from_centroids_from_scratch!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: lb active
+    @extract accel: lb active stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with RElk accelerator method")
@@ -317,6 +319,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
     end
     num_chgd = n
     fill!(active, true)
+    fill!(stable, false)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -402,7 +405,6 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
-            @assert ci > 0
             wi = w ≡ nothing ? 1 : w[i]
             old_v = costs[i]
             @views v = wi * _cost(data[:,i], centroids[:,ci])
@@ -599,7 +601,7 @@ end
 
 function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: δc lb ub
+    @extract accel: δc lb ub stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with SElk accelerator method")
@@ -608,6 +610,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     num_chgd_th = zeros(Int, Threads.nthreads())
+    fill!(stable, true)
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
@@ -636,7 +639,11 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
                     ubi = sv′
                 end
             end
-            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            if x ≠ ci
+                num_chgd_th[Threads.threadid()] += 1
+                stable[x] = false
+                stable[ci] = false
+            end
             costs[i], c[i], ub[i] = v, x, ubi
         end
     end
@@ -652,7 +659,7 @@ end
 
 function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: δc lb active
+    @extract accel: δc lb active stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with SSelk accelerator method")
@@ -666,6 +673,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
     active_inds = findall(active)
     all_inds = collect(1:k)
 
+    fill!(stable, true)
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
@@ -695,7 +703,11 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
                     ubi = √v′
                 end
             end
-            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            if x ≠ ci
+                num_chgd_th[Threads.threadid()] += 1
+                stable[x] = false
+                stable[ci] = false
+            end
             costs[i], c[i] = v, x
         end
     end
@@ -983,9 +995,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         δc .= 0.0
         @inbounds for j = 1:k
+            stable[j] && continue
             z = csizes[j]
             z > 0 || continue
-            stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
@@ -1064,9 +1076,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         δc .= 0.0
         @inbounds for j = 1:k
+            # stable[j] && continue
             z = csizes[j]
             z > 0 || continue
-            # stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
@@ -1134,9 +1146,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         δc .= 0.0
         @inbounds for j = 1:k
+            # stable[j] && continue
             z = csizes[j]
             z > 0 || continue
-            # stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
@@ -1173,7 +1185,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: δc lb ub
+        @extract accel: δc lb ub stable
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with SElk accelerator method")
@@ -1189,7 +1201,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
-                # stable[j] && continue
+                stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
                 for l = 1:m
@@ -1203,6 +1215,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         δc .= 0.0
         @inbounds for j = 1:k
+            stable[j] && continue
             z = csizes[j]
             z > 0 || continue
             new_centroids[:,j] ./= z
@@ -1229,7 +1242,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: δc lb active
+        @extract accel: δc lb active stable
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with RElk accelerator method")
@@ -1245,7 +1258,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
-                # stable[j] && continue
+                stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
                 for l = 1:m
@@ -1257,8 +1270,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        δc .= 0.0
+        fill!(δc, 0.0)
+        fill!(active, false)
         @inbounds for j = 1:k
+            stable[j] && continue
             z = csizes[j]
             z > 0 || continue
             new_centroids[:,j] ./= z
@@ -1268,6 +1283,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
+        # @assert active == .~stable
         @inbounds for i = 1:n
             lbi = @view lb[:,i]
             @simd for j in 1:k
@@ -1310,9 +1326,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         fill!(δc, 0.0)
         @inbounds for j = 1:k
+            stable[j] && continue
             z = csizes[j]
             z > 0 || continue
-            stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
