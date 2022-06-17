@@ -33,12 +33,8 @@ mutable struct Configuration{A<:Accelerator}
         @assert size(centroids) == (m, k)
         cost = sum(costs)
         csizes = zeros(Int, k)
-        if !all(c .== 0)
-            for i = 1:n
-                csizes[c[i]] += 1
-            end
-        end
         config = new{A}(m, k, n, c, cost, costs, centroids, csizes)
+        all(c .≠ 0) && update_csizes!(config)
         config.accel = A(config)
         return config
     end
@@ -62,34 +58,6 @@ end
 
 include("accelerators.jl")
 
-function remove_empty!(config::Configuration)
-    @extract config: m k n c costs centroids csizes accel
-    DataLogging.@push_prefix! "RM_EMPTY"
-
-    nonempty = csizes .> 0
-    k_new = sum(nonempty)
-    DataLogging.@log "k_new: $k_new k: $k"
-    if k_new == k
-        DataLogging.@pop_prefix!
-        return config
-    end
-    centroids = centroids[:, nonempty]
-    new_inds = cumsum(nonempty)
-    for i = 1:n
-        @assert nonempty[c[i]]
-        c[i] = new_inds[c[i]]
-    end
-    csizes = csizes[nonempty]
-    reset!(accel)
-
-    config.k = k_new
-    config.centroids = centroids
-    config.csizes = csizes
-
-    DataLogging.@pop_prefix!
-    return config
-end
-
 Base.@propagate_inbounds function _cost(d1, d2)
     v1 = 0.0
     @simd for l = 1:length(d1)
@@ -98,8 +66,16 @@ Base.@propagate_inbounds function _cost(d1, d2)
     return v1
 end
 
+function update_csizes!(config::Configuration)
+    @extract config: n c csizes
+    fill!(csizes, 0)
+    @inbounds for i in 1:n
+        csizes[c[i]] += 1
+    end
+end
+
 function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes
+    @extract config: m k n c costs centroids
     @assert size(data) == (m, n)
 
     DataLogging.@push_prefix! "P_FROM_C"
@@ -121,12 +97,9 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
             costs[i], c[i] = v, x
         end
     end
-    cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        csizes[c[i]] += 1
-    end
     num_chgd = sum(num_chgd_th)
+    cost = sum(costs)
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -135,7 +108,7 @@ function partition_from_centroids!(config::Configuration{Naive}, data::Matrix{Fl
 end
 
 function partition_from_centroids!(config::Configuration{ReducedComparison}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: active
     @assert size(data) == (m, n)
 
@@ -172,14 +145,10 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
             costs[i], c[i] = v, x
         end
     end
-    cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
     num_fullsearch = sum(num_fullsearch_th)
     num_chgd = sum(num_chgd_th)
+    cost = sum(costs)
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
@@ -188,7 +157,7 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
 end
 
 function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: δc r cdist neighb stable nstable
     @assert size(data) == (m, n)
 
@@ -283,11 +252,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     cost = sum(costs)
     # cost′ = sum(@views _cost(data[:,i], centroids[:,c[i]]) for i = 1:n) # XXX
     # @assert cost ≈ cost′
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -296,7 +261,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
 end
 
 function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: δc lb ub s
     @assert size(data) == (m, n)
 
@@ -356,11 +321,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
         num_chgd = sum(num_chgd_th)
     end
     cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -369,7 +330,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
 end
 
 function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: δc lb s
     @assert size(data) == (m, n)
 
@@ -426,11 +387,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
         num_chgd = sum(num_chgd_th)
     end
     cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -439,7 +396,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
 end
 
 function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: δc lb ub
     @assert size(data) == (m, n)
 
@@ -502,11 +459,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
         num_chgd = sum(num_chgd_th)
     end
     cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -515,7 +468,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
 end
 
 function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: δc lb active
     @assert size(data) == (m, n)
 
@@ -586,11 +539,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
         num_fullsearch = sum(num_fullsearch_th)
     end
     cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
@@ -599,7 +548,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
 end
 
 function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: G δc ub groups gind lb
     @assert size(data) == (m, n)
 
@@ -710,11 +659,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
         num_chgd = sum(num_chgd_th)
     end
     cost = sum(costs)
-    fill!(csizes, 0)
-    for i in 1:n
-        ci = c[i]
-        csizes[ci] += 1
-    end
+    update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -725,7 +670,7 @@ end
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
 function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: ub
     @assert size(data) == (m, n)
 
@@ -747,7 +692,7 @@ function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang}}, data::Matr
 end
 
 function sync_costs!(config::Configuration{SElk}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
-    @extract config: m k n c costs centroids csizes accel
+    @extract config: m k n c costs centroids accel
     @extract accel: lb ub
     @assert size(data) == (m, n)
 
