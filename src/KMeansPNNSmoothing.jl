@@ -17,213 +17,6 @@ export kmeans,
 
 abstract type Accelerator end
 
-struct Naive <: Accelerator
-end
-
-Naive(centroids::Matrix{Float64}, n::Int) = Naive()
-Base.copy(a::Naive) = a
-reset!(centroids::Matrix{Float64}, a::Naive) = a
-
-struct ReducedComparison <: Accelerator
-    active::BitVector
-    ReducedComparison(k::Int) = new(trues(k))
-    Base.copy(a::ReducedComparison) = new(copy(a.active))
-end
-
-ReducedComparison(centroids::Matrix{Float64}, n::Int) = ReducedComparison(size(centroids, 2))
-reset!(centroids::Matrix{Float64}, a::ReducedComparison) = (a.active .= true; a)
-
-struct KBall <: Accelerator
-    δc::Vector{Float64}
-    r::Vector{Float64}
-    cdist::Matrix{Float64}
-    neighb::Vector{Vector{Int}}
-    stable::BitVector
-    nstable::BitVector
-    function KBall(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        δc = zeros(k)
-        r = fill(Inf, k)
-        cdist = [@inbounds @views √_cost(centroids[:,i], centroids[:,j]) for i = 1:k, j = 1:k] # TODO
-        neighb = [deleteat!(collect(1:k), j) for j = 1:k]
-        stable = falses(k)
-        nstable = falses(k)
-        new(δc, r, cdist, neighb, stable, nstable)
-    end
-    Base.copy(a::KBall) = new(copy(a.δc), copy(a.r), copy(a.cdist), copy.(a.neighb), copy(a.stable), copy(a.nstable))
-end
-
-function reset!(centroids::Matrix{Float64}, a::KBall)
-    m, k = size(centroids)
-    a.δc .= zeros(k)
-    fill!(a.r, Inf)
-    @inbounds for j = 1:k, i = 1:k
-        a.cdist[i,j] = √_cost(centroids[:,i], centroids[:,j])
-    end
-    a.neighb .= [deleteat!(collect(1:k), j) for j = 1:k]
-    fill!(a.stable, false)
-    fill!(a.nstable, false)
-    return a
-end
-
-struct Hamerly <: Accelerator
-    δc::Vector{Float64}
-    lb::Vector{Float64}
-    ub::Vector{Float64}
-    s::Vector{Float64}
-    function Hamerly(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        δc = zeros(k)
-        lb = zeros(n)
-        ub = fill(Inf, n)
-        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        return new(δc, lb, ub, s)
-    end
-end
-
-function reset!(centroids::Matrix{Float64}, a::Hamerly)
-    m, k = size(centroids)
-    a.δc .= zeros(k)
-    fill!(a.lb, 0.0)
-    fill!(a.ub, Inf)
-    @inbounds for j = 1:k
-        a.s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
-    end
-    return a
-end
-
-
-struct SHam <: Accelerator
-    δc::Vector{Float64}
-    lb::Vector{Float64}
-    s::Vector{Float64}
-    function SHam(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        δc = zeros(k)
-        lb = zeros(n)
-        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        return new(δc, lb, s)
-    end
-end
-
-function reset!(centroids::Matrix{Float64}, a::SHam)
-    m, k = size(centroids)
-    a.δc .= zeros(k)
-    fill!(a.lb, 0.0)
-    @inbounds for j = 1:k
-        a.s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
-    end
-    return a
-end
-
-struct SElk <: Accelerator
-    δc::Vector{Float64}
-    lb::Matrix{Float64}
-    ub::Vector{Float64}
-    function SElk(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        δc = zeros(k)
-        lb = zeros(k, n)
-        ub = fill(Inf, n)
-        return new(δc, lb, ub)
-    end
-end
-
-function reset!(centroids::Matrix{Float64}, a::SElk)
-    m, k = size(centroids)
-    fill!(a.δc, 0.0)
-    fill!(a.lb, 0.0)
-    fill!(a.ub, Inf)
-    return a
-end
-
-
-struct RElk <: Accelerator
-    δc::Vector{Float64}
-    lb::Matrix{Float64}
-    active::BitVector
-    function RElk(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        δc = zeros(k)
-        lb = zeros(k, n)
-        active = trues(k)
-        return new(δc, lb, active)
-    end
-end
-
-function reset!(centroids::Matrix{Float64}, a::RElk)
-    m, k = size(centroids)
-    fill!(a.δc, 0.0)
-    fill!(a.lb, 0.0)
-    fill!(a.active, true)
-    return a
-end
-
-
-function gen_groups(k, G)
-    b = k÷G
-    r = k - b*G
-    # gr = [(1:(b+(f≤r))) .+ (f≤r ? (b+1)*(f-1) : (b+1)*r + b*(f-r-1)) for f = 1:G]
-    groups = [(1:(b+(f≤r))) .+ ((b+1)*(f-1) - max(f-r-1,0)) for f = 1:G]
-    @assert vcat(groups...) == 1:k gr,vcat(groups...),1:k
-    return groups
-end
-
-struct Yinyang <: Accelerator
-    G::Int
-    δc::Vector{Float64}
-    δcₘ::Vector{Float64}
-    δcₛ::Vector{Float64}
-    jₘ::Vector{Float64}
-    ub::Vector{Float64}
-    groups::Vector{UnitRange{Int}}
-    gind::Vector{Int}
-    lb::Matrix{Float64}
-    function Yinyang(centroids::Matrix{Float64}, n::Int)
-        m, k = size(centroids)
-        G = max(1, round(Int, k / 10))
-        δc = zeros(k)
-        δcₘ = zeros(G)
-        δcₛ = zeros(G)
-        jₘ = zeros(Int, G)
-        ub = fill(Inf, n)
-        gind = zeros(Int, n)
-        lb = zeros(G, n)
-
-        if G > 1
-            result = kmeans(centroids, G; kmseeder=KMPlusPlus{1}(), verbose=true, accel=ReducedComparison)
-            groups = UnitRange{Int}[]
-            new_centroids = similar(centroids)
-            ind = 0
-            for f = 1:G
-                gr_inds = findall(result.labels .== f)
-                gr_size = length(gr_inds)
-                r = ind .+ (1:gr_size)
-                new_centroids[:,r] = centroids[:,gr_inds]
-                push!(groups, r)
-                ind += gr_size
-            end
-            # @assert vcat(groups...) == 1:k
-            centroids .= new_centroids
-        end
-        return new(G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb)
-    end
-end
-
-function reset!(centroids::Matrix{Float64}, a::Yinyang)
-    m, k = size(centroids)
-    fill!(a.δc, 0.0)
-    fill!(a.δcₘ, 0.0)
-    fill!(a.δcₛ, 0.0)
-    fill!(a.jₘ, 0)
-    fill!(a.ub, Inf)
-    fill!(a.gind, 0)
-    fill!(a.lb, 0.0)
-    return a
-end
-
-
-
 mutable struct Configuration{A<:Accelerator}
     m::Int
     k::Int
@@ -234,7 +27,7 @@ mutable struct Configuration{A<:Accelerator}
     centroids::Matrix{Float64}
     csizes::Vector{Int}
     accel::A
-    function Configuration{A}(m::Int, k::Int, n::Int, c::Vector{Int}, costs::Vector{Float64}, centroids::Matrix{Float64}, accel::A) where {A<:Accelerator}
+    function Configuration{A}(m::Int, k::Int, n::Int, c::Vector{Int}, costs::Vector{Float64}, centroids::Matrix{Float64}) where {A<:Accelerator}
         @assert length(c) == n
         @assert length(costs) == n
         @assert size(centroids) == (m, k)
@@ -245,7 +38,9 @@ mutable struct Configuration{A<:Accelerator}
                 csizes[c[i]] += 1
             end
         end
-        return new{A}(m, k, n, c, cost, costs, centroids, csizes, accel)
+        config = new{A}(m, k, n, c, cost, costs, centroids, csizes)
+        config.accel = A(config)
+        return config
     end
     function Base.copy(config::Configuration{A}) where {A<:Accelerator}
         @extract config : m k n c cost costs centroids csizes accel
@@ -253,20 +48,19 @@ mutable struct Configuration{A<:Accelerator}
     end
 end
 
-function Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, accel::A, w::Union{Vector{<:Real},Nothing} = nothing) where {A<:Accelerator}
+function Configuration{A}(data::Matrix{Float64}, centroids::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) where {A<:Accelerator}
     m, n = size(data)
     k = size(centroids, 2)
     @assert size(centroids, 1) == m
 
     c = zeros(Int, n)
     costs = fill(Inf, n)
-    config = Configuration{A}(m, k, n, c, costs, centroids, accel)
+    config = Configuration{A}(m, k, n, c, costs, centroids)
     partition_from_centroids!(config, data, w)
     return config
 end
 
-Configuration(data::Matrix{Float64}, centroids::Matrix{Float64}, A::Type{<:Accelerator}, w::Union{Vector{<:Real},Nothing} = nothing) =
-    Configuration(data, centroids, A(centroids, size(data,2)), w)
+include("accelerators.jl")
 
 function remove_empty!(config::Configuration)
     @extract config: m k n c costs centroids csizes accel
@@ -286,7 +80,7 @@ function remove_empty!(config::Configuration)
         c[i] = new_inds[c[i]]
     end
     csizes = csizes[nonempty]
-    reset!(centroids, accel)
+    reset!(accel)
 
     config.k = k_new
     config.centroids = centroids
@@ -1606,7 +1400,7 @@ function check_empty!(config::Configuration, data::Matrix{Float64})
         csizes[j] = 1
         costs[i] = 0.0
     end
-    reset!(centroids, accel)
+    reset!(accel)
     return true
 end
 
@@ -1783,7 +1577,7 @@ function init_centroids(::KMUnif, data::Matrix{Float64}, k::Int, A::Type{<:Accel
             i = centroid_inds[j]
             centroids[:,j] .= data[:,i]
         end
-        Configuration(data, centroids, A)
+        Configuration{A}(data, centroids)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1877,7 +1671,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Matrix{Float64}, k::Int, A::Type
             c, new_c_best = new_c_best, c
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr, A(centr, n))
+        Configuration{A}(m, k, n, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -1937,7 +1731,7 @@ function init_centroids(::KMAFKMC2{L}, data::Matrix{Float64}, k::Int, A::Type{<:
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr, A(centr, n))
+        Configuration{A}(m, k, n, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -2011,7 +1805,7 @@ function init_centroids(::KMPlusPlus{1}, data::Matrix{Float64}, k::Int, A::Type{
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr, A(centr, n))
+        Configuration{A}(m, k, n, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -2044,7 +1838,7 @@ function init_centroids(::KMMaxMin, data::Matrix{Float64}, k::Int, A::Type{<:Acc
             centr[:,j] .= datay
         end
         # returning config
-        Configuration{A}(m, k, n, c, costs, centr, A(centr, n))
+        Configuration{A}(m, k, n, c, costs, centr)
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
@@ -2223,7 +2017,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int, A::Type{<:
         tpp = @elapsed configs = begin
             split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
             @assert all(sum(split .== a) ≥ k for a = 1:J)
-            configs = Vector{Configuration}(undef, J)
+            configs = Vector{Configuration{A}}(undef, J)
             Threads.@threads for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
@@ -2247,7 +2041,7 @@ function init_centroids(S::KMPNNS{S0}, data::Matrix{Float64}, k::Int, A::Type{<:
                 c_new[i] = configs[a].c[inds[a]] + k * (a-1)
                 costs_new[i] = configs[a].costs[inds[a]]
             end
-            mconfig = Configuration{A}(m, k * J, n, c_new, costs_new, centroids_new, A(centroids_new, n))
+            mconfig = Configuration{A}(m, k * J, n, c_new, costs_new, centroids_new)
             pairwise_nn!(mconfig, k)
             partition_from_centroids!(mconfig, data)
             mconfig
@@ -2269,7 +2063,7 @@ function init_centroids(::KMPNN, data::Matrix{Float64}, k::Int, A::Type{<:Accele
         centroids = copy(data)
         c = collect(1:n)
         costs = zeros(n)
-        config = Configuration{A}(m, n, n, c, costs, centroids, A(centroids, n))
+        config = Configuration{A}(m, n, n, c, costs, centroids)
         pairwise_nn!(config, k)
         partition_from_centroids!(config, data)
         config
@@ -2289,7 +2083,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int, A::Type{
         tinit = @elapsed configs = begin
             split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
             @assert all(sum(split .== a) ≥ k for a = 1:J)
-            configs = Vector{Configuration}(undef, J)
+            configs = Vector{Configuration{A}}(undef, J)
             Threads.@threads for a = 1:J
                 rdata = data[:,split .== a]
                 DataLogging.@push_prefix! "SPLIT=$a"
@@ -2303,9 +2097,9 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int, A::Type{
         DataLogging.@log "INITDONE time: $tinit"
         pool = hcat((configs[a].centroids for a in 1:J)...)
         tref = @elapsed begin
-            pconfigs = Vector{Configuration}(undef, J)
+            pconfigs = Vector{Configuration{A}}(undef, J)
             for a = 1:J
-                config = Configuration(pool, configs[a].centroids, A)
+                config = Configuration{A}(pool, configs[a].centroids)
                 DataLogging.@push_prefix! "SPLIT=$a"
                 lloyd!(config, pool, 1_000, 1e-4, false)
                 DataLogging.@pop_prefix!
@@ -2315,7 +2109,7 @@ function init_centroids(S::KMRefine{S0}, data::Matrix{Float64}, k::Int, A::Type{
         end
         DataLogging.@log "REFINEDONE time: $tref"
         a_best = argmin([configs[a].cost for a in 1:J])
-        Configuration(data, configs[a_best].centroids, A)
+        Configuration{A}(data, configs[a_best].centroids)
     end
     DataLogging.@log "DONE time: $t cost: $(mconfig.cost)"
     DataLogging.@pop_prefix!
@@ -2371,8 +2165,8 @@ function init_centroids(S::KMScala, data::Matrix{Float64}, k::Int, A::Type{<:Acc
         # @assert all(z .> 0)
         cconfig = init_centroids(KMPlusPlus{1}(), centr, k, ReducedComparison; w=z)
         lloyd!(cconfig, centr, 1_000, 1e-4, false, z)
-        Configuration(data, cconfig.centroids, A)
-        # mconfig = Configuration(m, k′, n, c, costs, centr)
+        Configuration{A}(data, cconfig.centroids)
+        # mconfig = Configuration{A}(m, k′, n, c, costs, centr)
         # pairwise_nn!(mconfig, k)
         # partition_from_centroids!(mconfig, data)
         # mconfig
@@ -2499,7 +2293,7 @@ function kmeans(
     else
         centroids = kmseeder
         size(centroids) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(centroids))"))
-        config = Configuration(data, centroids, accel)
+        config = Configuration{accel}(data, centroids)
     end
 
     verbose && println("initial cost = $(config.cost)")
