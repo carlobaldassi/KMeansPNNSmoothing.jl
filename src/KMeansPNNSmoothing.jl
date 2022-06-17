@@ -328,7 +328,7 @@ end
 
 function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: ub groups gind lb
+    @extract accel: ub groups gind lb stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with RElk accelerator method")
@@ -369,6 +369,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
         end
     end
     num_chgd = n
+    fill!(stable, false)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -444,79 +445,56 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
 
     @assert all(c .> 0)
 
-    # all(c .> 0) && @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
-
-    if any(c .== 0)
-        error()
-    else
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        new_stable = trues(k)
-        sorted_neighb = copy.(neighb)
-        did_sort = falses(k)
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                nci = sorted_neighb[ci]
-                nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
-                @views v = _cost(data[:,i], centroids[:,ci])
-                d = √v
-                @assert d ≤ r[ci]
-                if length(nci) == 0
-                    costs[i] = v
-                    continue
-                end
-                if !did_sort[ci]
-                    sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
-                    did_sort[ci] = true
-                end
-                # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
-                lb = cdist[nci[1], ci] / 2
-                if d < lb
-                    costs[i] = v
-                    continue
-                end
-                x = ci
-                datai = @view data[:,i]
-                for h = 1:length(nci)
-                    j = nci[h]
-                    ub = (h == length(nci)) ? r[ci] : (cdist[nci[h+1], ci] / 2)
-                    # @assert lb ≤ ub
-                    @views v′ = _cost(datai, centroids[:,j])
-                    if v′ < v
-                        v, x = v′, j
-                    end
-                    lb < d ≤ ub && break
-                    lb = ub
-                end
-                if x ≠ ci
-                    new_stable[ci] = false
-                    new_stable[x] = false
-                    num_chgd_th[Threads.threadid()] += 1
-                end
-                costs[i], c[i] = v, x
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    new_stable = trues(k)
+    sorted_neighb = copy.(neighb)
+    did_sort = falses(k)
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            nci = sorted_neighb[ci]
+            nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
+            @views v = _cost(data[:,i], centroids[:,ci])
+            d = √v
+            @assert d ≤ r[ci]
+            if length(nci) == 0
+                costs[i] = v
+                continue
             end
+            if !did_sort[ci]
+                sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
+                did_sort[ci] = true
+            end
+            # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
+            lb = cdist[nci[1], ci] / 2
+            if d < lb
+                costs[i] = v
+                continue
+            end
+            x = ci
+            datai = @view data[:,i]
+            for h = 1:length(nci)
+                j = nci[h]
+                ub = (h == length(nci)) ? r[ci] : (cdist[nci[h+1], ci] / 2)
+                # @assert lb ≤ ub
+                @views v′ = _cost(datai, centroids[:,j])
+                if v′ < v
+                    v, x = v′, j
+                end
+                lb < d ≤ ub && break
+                lb = ub
+            end
+            if x ≠ ci
+                new_stable[ci] = false
+                new_stable[x] = false
+                num_chgd_th[Threads.threadid()] += 1
+            end
+            costs[i], c[i] = v, x
         end
-        num_chgd = sum(num_chgd_th)
     end
-    # # XXX
-    # @inbounds for i in 1:n
-    #     begin
-    #         ci = c[i]
-    #         v, x = Inf, 0
-    #         for j in 1:k
-    #             @views v′ = _cost(data[:,i], centroids[:,j])
-    #             if v′ < v
-    #                 v, x = v′, j
-    #             end
-    #         end
-    #         @assert v ≈ costs[i] v,costs[i],x,ci,nstable[ci],stable[ci],length(neighb[ci])
-    #         @assert x == ci v,costs[i],x,ci,nstable[ci],stable[ci]
-    #     end
-    # end
-    stable .= new_stable
+    num_chgd = sum(num_chgd_th)
+    copy!(stable, new_stable)
     cost = sum(costs)
-    # cost′ = sum(@views _cost(data[:,i], centroids[:,c[i]]) for i = 1:n) # XXX
-    # @assert cost ≈ cost′
     update_csizes!(config)
 
     config.cost = cost
@@ -535,41 +513,35 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            lbi, ubi = lb[i], ub[i]
+            r = s[ci] / 2
+            lbr = max(lbi, r)
+            lbr > ubi && continue
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            ub[i] = √v
+            lbr > ub[i] && continue
 
-    if any(c .== 0)
-        error()
-    else
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                lbi, ubi = lb[i], ub[i]
-                r = s[ci] / 2
-                lbr = max(lbi, r)
-                lbr > ubi && continue
-                @views v = _cost(data[:,i], centroids[:,ci])
-                costs[i] = v
-                ub[i] = √v
-                lbr > ub[i] && continue
-
-                v1, v2, x1, x2 = Inf, Inf, 0, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    if v′ < v1
-                        v2, x2 = v1, x1
-                        v1, x1 = v′, j
-                    elseif v′ < v2
-                        v2, x2 = v′, j
-                    end
+            v1, v2, x1, x2 = Inf, Inf, 0, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                if v′ < v1
+                    v2, x2 = v1, x1
+                    v1, x1 = v′, j
+                elseif v′ < v2
+                    v2, x2 = v′, j
                 end
-                x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                costs[i], c[i] = v1, x1
-                ub[i], lb[i] = √v1, √v2
             end
+            x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            costs[i], c[i] = v1, x1
+            ub[i], lb[i] = √v1, √v2
         end
-        num_chgd = sum(num_chgd_th)
     end
+    num_chgd = sum(num_chgd_th)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -589,39 +561,33 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            lbi = lb[i]
+            r = s[ci] / 2
+            lbr = max(lbi, r)
+            lbr > √v && continue
 
-    if any(c .== 0)
-        error()
-    else
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                @views v = _cost(data[:,i], centroids[:,ci])
-                costs[i] = v
-                lbi = lb[i]
-                r = s[ci] / 2
-                lbr = max(lbi, r)
-                lbr > √v && continue
-
-                v1, v2, x1 = Inf, Inf, 0
-                for j in 1:k
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    if v′ < v1
-                        v2 = v1
-                        v1, x1 = v′, j
-                    elseif v′ < v2
-                        v2 = v′
-                    end
+            v1, v2, x1 = Inf, Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                if v′ < v1
+                    v2 = v1
+                    v1, x1 = v′, j
+                elseif v′ < v2
+                    v2 = v′
                 end
-                x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                costs[i], c[i] = v1, x1
-                lb[i] = √v2
             end
+            x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            costs[i], c[i] = v1, x1
+            lb[i] = √v2
         end
-        num_chgd = sum(num_chgd_th)
     end
+    num_chgd = sum(num_chgd_th)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -641,46 +607,40 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            ubi = ub[i]
+            lbi = @view lb[:,i]
 
-    if any(c .== 0)
-        error()
-    else
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                ubi = ub[i]
-                lbi = @view lb[:,i]
-
-                skip = true
-                for j = 1:k
-                    lbi[j] ≤ ubi && j ≠ ci && (skip = false; break)
-                end
-                skip && continue
-
-                @views v = _cost(data[:,i], centroids[:,ci])
-                x = ci
-                sv = √v
-                ubi = sv
-                lbi[ci] = sv
-
-                for j in 1:k
-                    (lbi[j] > ubi || j == ci) && continue
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    sv′ = √v′
-                    lbi[j] = sv′
-                    if v′ < v
-                        v, x = v′, j
-                        ubi = sv′
-                    end
-                end
-                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                costs[i], c[i], ub[i] = v, x, ubi
+            skip = true
+            for j = 1:k
+                lbi[j] ≤ ubi && j ≠ ci && (skip = false; break)
             end
+            skip && continue
+
+            @views v = _cost(data[:,i], centroids[:,ci])
+            x = ci
+            sv = √v
+            ubi = sv
+            lbi[ci] = sv
+
+            for j in 1:k
+                (lbi[j] > ubi || j == ci) && continue
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                sv′ = √v′
+                lbi[j] = sv′
+                if v′ < v
+                    v, x = v′, j
+                    ubi = sv′
+                end
+            end
+            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            costs[i], c[i], ub[i] = v, x, ubi
         end
-        num_chgd = sum(num_chgd_th)
     end
+    num_chgd = sum(num_chgd_th)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -700,53 +660,47 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    num_fullsearch_th = zeros(Int, Threads.nthreads())
 
-    if any(c .== 0)
-        error()
-    else
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        num_fullsearch_th = zeros(Int, Threads.nthreads())
+    active_inds = findall(active)
+    all_inds = collect(1:k)
 
-        active_inds = findall(active)
-        all_inds = collect(1:k)
-
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                if active[ci]
-                    old_v = costs[i]
-                    @views v = _cost(data[:,i], centroids[:,ci])
-                    fullsearch = (v > old_v)
-                else
-                    v = costs[i]
-                    fullsearch = false
-                end
-                lbi = @view lb[:,i]
-                ubi = √v
-                if active[ci]
-                    lbi[ci] = ubi
-                end
-                num_fullsearch_th[Threads.threadid()] += fullsearch
-
-                x = ci
-                inds = fullsearch ? all_inds : active_inds
-                for j in inds
-                    (lbi[j] > ubi || j == ci) && continue
-                    @views v′ = _cost(data[:,i], centroids[:,j])
-                    lbi[j] = √v′
-                    if v′ < v
-                        v, x = v′, j
-                        ubi = √v′
-                    end
-                end
-                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                costs[i], c[i] = v, x
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            if active[ci]
+                old_v = costs[i]
+                @views v = _cost(data[:,i], centroids[:,ci])
+                fullsearch = (v > old_v)
+            else
+                v = costs[i]
+                fullsearch = false
             end
+            lbi = @view lb[:,i]
+            ubi = √v
+            if active[ci]
+                lbi[ci] = ubi
+            end
+            num_fullsearch_th[Threads.threadid()] += fullsearch
+
+            x = ci
+            inds = fullsearch ? all_inds : active_inds
+            for j in inds
+                (lbi[j] > ubi || j == ci) && continue
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                lbi[j] = √v′
+                if v′ < v
+                    v, x = v′, j
+                    ubi = √v′
+                end
+            end
+            x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
+            costs[i], c[i] = v, x
         end
-        num_chgd = sum(num_chgd_th)
-        num_fullsearch = sum(num_fullsearch_th)
     end
+    num_chgd = sum(num_chgd_th)
+    num_fullsearch = sum(num_fullsearch_th)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -758,7 +712,7 @@ end
 
 function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: G δc ub groups gind lb
+    @extract accel: G δc ub groups gind lb stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with Yinyang accelerator method")
@@ -766,76 +720,75 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
-
-    if any(c .== 0)
-        error()
-    else
-        @assert all(1 .≤ gind .≤ G)
-        num_chgd_th = zeros(Int, Threads.nthreads())
-        t = @elapsed Threads.@threads for i in 1:n
-            @inbounds begin
-                ci = c[i]
-                fi = gind[i]
-                # @assert 1 ≤ ci ≤ k
-                # @assert 1 ≤ fi ≤ G
-                ubi = ub[i]
-                lbi = @view lb[:,i]
-                skip = true
-                for lbif in lbi
-                    lbif ≤ ubi && (skip = false; break)
-                end
-                skip && continue
-
-                tight = false
-                v, x = Inf, 0
-                for (f,gr) in enumerate(groups)
-                    lbi[f] > ubi && continue
-                    if !tight
-                        # @assert v == Inf
-                        @views v = _cost(data[:,i], centroids[:,ci])
-                        sv = √v
-                        ubi = sv
-                        tight = true
-                        x = ci
-                        lbi[f] > ubi && continue
-                    end
-                    # @assert tight
-                    v1, v2, x1 = Inf, Inf, 0
-                    for j in gr
-                        j == x && continue
-                        @views v′ = _cost(data[:,i], centroids[:,j])
-                        if v′ < v1
-                            v2 = v1
-                            v1, x1 = v′, j
-                        elseif v′ < v2
-                            v2 = v′
-                        end
-                    end
-                    if v1 < v
-                        @assert x1 ≠ x
-                        lbi[f] = √v2
-                        if f ≠ fi
-                            lbi[fi] = min(lbi[fi], ubi)
-                            fi = f
-                        else
-                            lbi[f] = min(lbi[f], √v)
-                        end
-                        v, x = v1, x1
-                        ubi = √v
-                    else
-                        lbi[f] = √v1
-                    end
-                end
-                x ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
-                @assert 1 ≤ x ≤ k
-                costs[i], c[i] = v, x
-                gind[i] = fi
-                ub[i] = ubi
+    # @assert all(1 .≤ gind .≤ G)
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    fill!(stable, true)
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            fi = gind[i]
+            # @assert 1 ≤ ci ≤ k
+            # @assert 1 ≤ fi ≤ G
+            ubi = ub[i]
+            lbi = @view lb[:,i]
+            skip = true
+            for lbif in lbi
+                lbif ≤ ubi && (skip = false; break)
             end
+            skip && continue
+
+            tight = false
+            v, x = Inf, 0
+            for (f,gr) in enumerate(groups)
+                lbi[f] > ubi && continue
+                if !tight
+                    # @assert v == Inf
+                    @views v = _cost(data[:,i], centroids[:,ci])
+                    sv = √v
+                    ubi = sv
+                    tight = true
+                    x = ci
+                    lbi[f] > ubi && continue
+                end
+                # @assert tight
+                v1, v2, x1 = Inf, Inf, 0
+                for j in gr
+                    j == x && continue
+                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    if v′ < v1
+                        v2 = v1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2 = v′
+                    end
+                end
+                if v1 < v
+                    @assert x1 ≠ x
+                    lbi[f] = √v2
+                    if f ≠ fi
+                        lbi[fi] = min(lbi[fi], ubi)
+                        fi = f
+                    else
+                        lbi[f] = min(lbi[f], √v)
+                    end
+                    v, x = v1, x1
+                    ubi = √v
+                else
+                    lbi[f] = √v1
+                end
+            end
+            if x ≠ ci
+                num_chgd_th[Threads.threadid()] += 1
+                stable[x] = false
+                stable[ci] = false
+            end
+            @assert 1 ≤ x ≤ k
+            costs[i], c[i] = v, x
+            gind[i] = fi
+            ub[i] = ubi
         end
-        num_chgd = sum(num_chgd_th)
     end
+    num_chgd = sum(num_chgd_th)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -1011,15 +964,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
@@ -1029,21 +975,15 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
-        # Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
         δc .= 0.0
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
             stable[j] && continue
             new_centroids[:,j] ./= z
@@ -1052,17 +992,12 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 centroids[l,j] = new_centroids[l,j]
             end
         end
-        # @assert all(δc[.~stable] .≈ Δ[.~stable]) δc-Δ
-        # @assert all(δc[stable] .== 0)
-        # @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
         r[.~stable] .= 0.0
         @inbounds for i = 1:n # TODO: threads
             j = c[i]
             stable[j] && continue
             r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
         end
-        # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
-        # @assert all(maximum(mat[j,c.==j]) ≈ r[j] for j = 1:k) filter(x->!(x[1]≈x[2]), [(maximum(mat[j,c.==j]),r[j]) for j = 1:k])
 
         @inbounds for j = 1:k, j′ = 1:k
             cd = cdist[j′, j]
@@ -1070,7 +1005,6 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             rj = r[j]
             if cd ≥ 2rj + δ + δ′
                 cdist[j′, j] = cd - δ - δ′
-                # @assert cdist[j′, j] ≤ √_cost(centroids[:,j′], centroids[:,j]) cdist[j′, j], √_cost(centroids[:,j′], centroids[:,j])
             else
                 @views cd = √_cost(centroids[:,j′], centroids[:,j])
                 cdist[j′, j] = cd
@@ -1079,32 +1013,20 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         fill!(nstable, false)
         old_nj = Int[]
         sizehint!(old_nj, k)
-        # cdvec = Float64[]
-        # sizehint!(cdvec, k)
         @inbounds for j = 1:k
             nj = neighb[j]
             resize!(old_nj, length(nj))
             copy!(old_nj, nj)
-            # sort!(old_nj, alg=MergeSort)
-            # empty!(nj)
-            # empty!(cdvec)
             resize!(nj, k-1)
-            # resize!(cdvec, k-1)
             ind = 0
             for j′ = 1:k
                 j′ == j && continue
                 if cdist[j′, j] < 2r[j]
                     ind += 1
                     nj[ind] = j′
-                    # cdvec[ind] = cdist[j′,j]
-                    # push!(nj, j′)
-                    # push!(cdvec, cdist[j′,j])
                 end
             end
             resize!(nj, ind)
-            # resize!(cdvec, ind)
-            # nj .= nj[sortperm(cdvec; alg=QuickSort)]
-            # sort!(nj, by=j′->cdist[j′,j], alg=QuickSort)
             nj == old_nj && (nstable[j] = true)
         end
         return config
@@ -1115,7 +1037,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract accel: δc lb ub s
         @assert size(data) == (m, n)
 
-        w ≡ nothing || error("w unsupported with KBall accelerator method")
+        w ≡ nothing || error("w unsupported with Hamerly accelerator method")
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1123,15 +1045,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
@@ -1141,21 +1056,15 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
-        # Δ = vec(.√sum((centroids .- new_centroids ./ reshape(zs, (1,k))).^2, dims=1)) # XXX
         δc .= 0.0
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
             # stable[j] && continue
             new_centroids[:,j] ./= z
@@ -1174,17 +1083,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 δcₛ = δcj
             end
         end
-        # @show δcₘ, δcₛ, jₘ
         @inbounds for i = 1:n
             ci = c[i]
             lb[i] -= (ci == jₘ ? δcₛ : δcₘ)
             ub[i] += δc[c[i]]
         end
-        # @assert all(δc[.~stable] .≈ Δ[.~stable]) δc-Δ
-        # @assert all(δc[stable] .== 0)
-        # @assert all(all(centroids[:,j] .≈ mean(data[:,c.==j], dims=2)) for j = 1:k)
-        # mat = [√_cost(centroids[:,j], data[:,i]) for j = 1:k, i = 1:n]
-        # @assert all(maximum(mat[j,c.==j]) ≈ r[j] for j = 1:k) filter(x->!(x[1]≈x[2]), [(maximum(mat[j,c.==j]),r[j]) for j = 1:k])
 
         @inbounds for j = 1:k
             s[j] = Inf
@@ -1204,7 +1107,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract accel: δc lb s
         @assert size(data) == (m, n)
 
-        w ≡ nothing || error("w unsupported with KBall accelerator method")
+        w ≡ nothing || error("w unsupported with SHam accelerator method")
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1212,15 +1115,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
@@ -1230,20 +1126,15 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
         δc .= 0.0
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
             # stable[j] && continue
             new_centroids[:,j] ./= z
@@ -1285,7 +1176,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract accel: δc lb ub
         @assert size(data) == (m, n)
 
-        w ≡ nothing || error("w unsupported with KBall accelerator method")
+        w ≡ nothing || error("w unsupported with SElk accelerator method")
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1293,15 +1184,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
@@ -1311,20 +1195,15 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
         δc .= 0.0
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
@@ -1353,7 +1232,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract accel: δc lb active
         @assert size(data) == (m, n)
 
-        w ≡ nothing || error("w unsupported with KBall accelerator method")
+        w ≡ nothing || error("w unsupported with RElk accelerator method")
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1361,15 +1240,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
@@ -1379,20 +1251,15 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
         δc .= 0.0
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
@@ -1412,11 +1279,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
     end
 
     global function centroids_from_partition!(config::Configuration{Yinyang}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
-        @extract config: m k n c costs centroids csizes accel
-        @extract accel: G δc δcₘ δcₛ jₘ ub groups gind lb
+        @extract config: m k n c centroids csizes accel
+        @extract accel: G δc δcₘ δcₛ jₘ ub groups gind lb stable
         @assert size(data) == (m, n)
 
-        w ≡ nothing || error("w unsupported with KBall accelerator method")
+        w ≡ nothing || error("w unsupported with Yinyang accelerator method")
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1424,46 +1291,34 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
-        end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
         foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
         Threads.@threads for i = 1:n
             @inbounds begin
                 j = c[i]
-                # stable[j] && continue
+                stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
                 for l = 1:m
                     nc[l,j] += data[l,i]
                 end
-                zs_thr[id][j] += 1
             end
         end
         fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
             new_centroids .+= nc_thr
         end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
-        δc .= 0.0
+        fill!(δc, 0.0)
         @inbounds for j = 1:k
-            z = zs[j]
+            z = csizes[j]
             z > 0 || continue
+            stable[j] && continue
             new_centroids[:,j] ./= z
             @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
             for l = 1:m
                 centroids[l,j] = new_centroids[l,j]
             end
         end
-        # δcₘ, δcₛ, jₘ = zeros(G), zeros(G), zeros(Int, G)
         fill!(δcₘ, 0.0)
         fill!(δcₛ, 0.0)
         fill!(jₘ, 0)
@@ -2315,7 +2170,7 @@ function lloyd!(
         num_chgd = partition_from_centroids!(config, data, w)
         new_cost = config.cost
         synched = false
-        if new_cost ≥ old_cost * (1 - tol) && !found_empty
+        if tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty
             old_new_cost = new_cost
             sync_costs!(config, data, w)
             new_cost = config.cost
@@ -2323,7 +2178,7 @@ function lloyd!(
             synched = (new_cost ≠ old_new_cost)
         end
         DataLogging.@log "it: $it cost: $(config.cost) num_chgd: $(num_chgd)$(found_empty ? " [found_empty]" : "")$(synched ? " [synched]" : "")"
-        if num_chgd == 0 || (new_cost ≥ old_cost * (1 - tol) && !found_empty && !synched)
+        if num_chgd == 0 || (tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty && !synched)
             if !synched
                 sync_costs!(config, data, w)
                 new_cost = config.cost

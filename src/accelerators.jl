@@ -68,7 +68,7 @@ struct Hamerly <: Accelerator
         s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
         return new(config, δc, lb, ub, s)
     end
-    function Base.copy(accel::Hamerly) 
+    function Base.copy(accel::Hamerly)
         @extract accel : config δc lb ub s
         return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s))
     end
@@ -99,7 +99,7 @@ struct SHam <: Accelerator
         s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
         return new(config, δc, lb, s)
     end
-    function Base.copy(accel::SHam) 
+    function Base.copy(accel::SHam)
         @extract accel : config δc lb s
         return new(accel.config, copy(δc), copy(lb), copy(s))
     end
@@ -155,7 +155,7 @@ struct RElk <: Accelerator
         active = trues(k)
         return new(config, δc, lb, active)
     end
-    function Base.copy(accel::RElk) 
+    function Base.copy(accel::RElk)
         @extract accel : config δc lb active
         return new(accel.config, copy(δc), copy(lb), copy(active))
     end
@@ -190,6 +190,7 @@ struct Yinyang <: Accelerator
     groups::Vector{UnitRange{Int}}
     gind::Vector{Int}
     lb::Matrix{Float64}
+    stable::BitVector
     function Yinyang(config::Configuration)
         @extract config : n k centroids
         G = max(1, round(Int, k / 10))
@@ -200,6 +201,7 @@ struct Yinyang <: Accelerator
         ub = fill(Inf, n)
         gind = zeros(Int, n)
         lb = zeros(G, n)
+        stable = falses(k)
 
         ## cluster the centroids
         if G > 1
@@ -222,11 +224,11 @@ struct Yinyang <: Accelerator
             # @assert vcat(groups...) == 1:k
             copy!(centroids, new_centroids)
         end
-        return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb)
+        return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable)
     end
     function Base.copy(accel::Yinyang)
-        @extract accel : config δc δcₘ δcₛ jₘ ub gind lb
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(gind), copy(lb))
+        @extract accel : config δc δcₘ δcₛ jₘ ub gind lb stable
+        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(gind), copy(lb), copy(stable))
     end
 
 end
@@ -249,5 +251,6 @@ function reset!(accel::Yinyang)
         end
     end
     fill!(lb, 0.0)
+    fill!(stable, false)
     return accel
 end
