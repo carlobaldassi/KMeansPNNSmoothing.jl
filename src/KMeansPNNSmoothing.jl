@@ -445,7 +445,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    @assert all(c .> 0)
+    # @assert all(c .> 0)
 
     num_chgd_th = zeros(Int, Threads.nthreads())
     new_stable = trues(k)
@@ -737,8 +737,6 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
     fill!(stable, true)
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            ci = c[i]
-            fi = gind[i]
             # @assert 1 ≤ ci ≤ k
             # @assert 1 ≤ fi ≤ G
             ubi = ub[i]
@@ -748,6 +746,9 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
                 lbif ≤ ubi && (skip = false; break)
             end
             skip && continue
+
+            ci = c[i]
+            fi = gind[i]
 
             tight = false
             v, x = Inf, 0
@@ -886,7 +887,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 wi = w ≡ nothing ? 1 : w[i]
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += wi * data[l,i]
                 end
                 zs_thr[id][j] += wi
@@ -936,7 +937,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 wi = w ≡ nothing ? 1 : w[i]
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += wi * data[l,i]
                 end
                 zs_thr[id][j] += wi
@@ -984,7 +985,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1065,7 +1066,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 # stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1135,7 +1136,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 # stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1204,7 +1205,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1261,7 +1262,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1315,7 +1316,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
-                for l = 1:m
+                @simd for l = 1:m
                     nc[l,j] += data[l,i]
                 end
             end
@@ -1351,11 +1352,19 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         @inbounds for i = 1:n
             ci = c[i]
-            fi = gind[i]
             ub[i] += δc[ci]
-            for f = 1:G
-                lb[f,i] -= (ci == jₘ[f] ? δcₛ[f] : δcₘ[f])
+        end
+        @inbounds for i = 1:n
+            lbi = @view lb[:,i]
+            @simd for f = 1:G
+                lbi[f] -= δcₘ[f]
             end
+        end
+        @inbounds for i = 1:n
+            ci = c[i]
+            fi = gind[i]
+            ci == jₘ[fi] || continue
+            lb[fi,i] -= (δcₛ[fi] - δcₘ[fi])
         end
         return config
     end

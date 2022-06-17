@@ -240,7 +240,7 @@ struct Yinyang <: Accelerator
 end
 
 function reset!(accel::Yinyang)
-    @extract accel : config δc δcₘ δcₛ jₘ ub gind lb
+    @extract accel : config δc δcₘ δcₛ jₘ ub gind lb stable
     @extract config : c
     fill!(δc, 0.0)
     fill!(δcₘ, 0.0)
