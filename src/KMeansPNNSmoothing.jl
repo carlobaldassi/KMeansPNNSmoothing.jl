@@ -459,15 +459,12 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
                 end
             end
             if x ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x] = false
                     stable[ci] = false
                     csizes[x] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i] = v, x
@@ -513,7 +510,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 continue
             end
             if !did_sort[ci]
-                lock(lk2) do
+                @lock lk2 begin
                     if !did_sort[ci] # maybe some thread did it while we were waiting...
                         sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
                         did_sort[ci] = true
@@ -540,15 +537,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
                 lb = ub
             end
             if x ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     new_stable[ci] = false
                     new_stable[x] = false
                     csizes[ci] -= 1
                     csizes[x] += 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i] = v, x
@@ -600,15 +594,12 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
                 end
             end
             if x1 ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x1] = false
                     stable[ci] = false
                     csizes[x1] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i] = v1, x1
@@ -667,15 +658,12 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Matrix
                 end
             end
             if x1 ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x1] = false
                     stable[ci] = false
                     csizes[x1] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i], = v1, x1
@@ -724,15 +712,12 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
                 end
             end
             if x1 ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x1] = false
                     stable[ci] = false
                     csizes[x1] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i] = v1, x1
@@ -789,15 +774,12 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Matrix{Flo
                 end
             end
             if x ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x] = false
                     stable[ci] = false
                     csizes[x] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i], ub[i] = v, x, ubi
@@ -859,15 +841,12 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Matrix{Flo
                 end
             end
             if x ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x] = false
                     stable[ci] = false
                     csizes[x] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             costs[i], c[i] = v, x
@@ -952,15 +931,12 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
                 end
             end
             if x ≠ ci
-                lock(lk)
-                try
+                @lock lk begin
                     num_chgd += 1
                     stable[x] = false
                     stable[ci] = false
                     csizes[x] += 1
                     csizes[ci] -= 1
-                finally
-                    unlock(lk)
                 end
             end
             @assert 1 ≤ x ≤ k
