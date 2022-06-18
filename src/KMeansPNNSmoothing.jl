@@ -501,14 +501,18 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
         @inbounds begin
             ci = c[i]
             nci = sorted_neighb[ci]
-            nstable[ci] && stable[ci] && all(stable[j] for j in nci) && continue
-            @views v = _cost(data[:,i], centroids[:,ci])
+            if nstable[ci] && stable[ci]
+                skip = true
+                for j in nci
+                    stable[j] || (skip = false; break)
+                end
+                skip && continue
+            end
+            # @views v = _cost(data[:,i], centroids[:,ci])
+            v = costs[i] # was set when computing r
             d = √v
             @assert d ≤ r[ci]
-            if length(nci) == 0
-                costs[i] = v
-                continue
-            end
+            length(nci) == 0 && continue
             if !did_sort[ci]
                 @lock lk2 begin
                     if !did_sort[ci] # maybe some thread did it while we were waiting...
@@ -519,10 +523,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
             end
             # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
             lb = cdist[nci[1], ci] / 2
-            if d < lb
-                costs[i] = v
-                continue
-            end
+            d < lb && continue
             x = ci
             datai = @view data[:,i]
             for h = 1:length(nci)
@@ -575,7 +576,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
             ci = c[i]
             lbi, ubi = lb[i], ub[i]
             hs = s[ci] / 2
-            lbr = max(lbi, hs)
+            lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
             lbr > ubi && continue
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
@@ -697,7 +698,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
             costs[i] = v
             lbi = lb[i]
             hs = s[ci] / 2
-            lbr = max(lbi, hs)
+            lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
             lbr > √v && continue
 
             v1, v2, x1 = v, Inf, ci
@@ -1151,10 +1152,20 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
         r[.~stable] .= 0.0
-        @inbounds for i = 1:n # TODO: threads
+        lk = Threads.SpinLock()
+        @inbounds Threads.@threads for i = 1:n # TODO: threads
             j = c[i]
             stable[j] && continue
-            r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
+            # r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
+            v = @views _cost(centroids[:,j], data[:,i])
+            costs[i] = v
+            sv = √v
+            if sv > r[j]
+                @lock lk begin
+                    r[j] = sv
+                end
+            end
+            # r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
         end
 
         @inbounds for j = 1:k, j′ = 1:k

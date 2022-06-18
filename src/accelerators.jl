@@ -36,8 +36,8 @@ struct KBall <: Accelerator
     r::Vector{Float64}
     cdist::Matrix{Float64}
     neighb::Vector{Vector{Int}}
-    stable::BitVector
-    nstable::BitVector
+    stable::Vector{Bool} # there's too much hopping around for BitVector
+    nstable::Vector{Bool}
     function KBall(config::Configuration{KBall})
         @extract config : centroids
         m, k = size(centroids)
