@@ -1009,15 +1009,41 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
     zsdict = Dict{NTuple{2,Int},Vector{Float64}}(),
     zsthrdict = Dict{NTuple{2,Int},Vector{Vector{Float64}}}()
 
-    global function centroids_from_partition!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
-        @extract config: m k n c costs centroids csizes
-        @assert size(data) == (m, n)
-
+    function _sum_clustered_data!(new_centroids, data, c, stable)
+        m, k = size(new_centroids)
+        @assert size(data, 1) == m
+        n = size(data, 2)
         new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
             [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
-        zs = get!(zsdict, (Threads.threadid(),k)) do
-            zeros(Float64, k)
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                stable[j] && continue
+                id = Threads.threadid()
+                ncj = @view new_centroids_thr[id][:,j]
+                datai = @view data[:,i]
+                @simd for l = 1:m
+                    ncj[l] += datai[l]
+                end
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        return new_centroids
+    end
+
+    function _sum_clustered_data!(new_centroids, zs, data, c, stable, w)
+        m, k = size(new_centroids)
+        @assert size(data, 1) == m
+        n = size(data, 2)
+        @assert length(zs) == k
+
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
         end
         zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
             [zeros(Float64, k) for id in 1:Threads.nthreads()]
@@ -1029,6 +1055,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             @inbounds begin
                 j = c[i]
                 wi = w ≡ nothing ? 1 : w[i]
+                stable ≢ nothing && stable[j] && continue
                 id = Threads.threadid()
                 nc = new_centroids_thr[id]
                 @simd for l = 1:m
@@ -1037,14 +1064,44 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 zs_thr[id][j] += wi
             end
         end
-        fill!(centroids, 0.0)
+        fill!(new_centroids, 0.0)
         for nc_thr in new_centroids_thr
-            centroids .+= nc_thr
+            new_centroids .+= nc_thr
         end
-        zs = zeros(k)
+        fill!(zs, 0.0)
         for zz in zs_thr
             zs .+= zz
         end
+    end
+
+    function _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        m, k = size(centroids)
+        fill!(δc, 0.0)
+        @inbounds for j = 1:k
+            stable[j] && continue
+            z = csizes[j]
+            z > 0 || continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+    end
+
+    global function centroids_from_partition!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes
+        @assert size(data) == (m, n)
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        zs = get!(zsdict, (Threads.threadid(),k)) do
+            zeros(Float64, k)
+        end
+
+        _sum_clustered_data!(centroids, zs, data, c, nothing, w)
+
         @inbounds for j = 1:k
             z = zs[j]
             z > 0 || continue
@@ -1063,39 +1120,12 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
         zs = get!(zsdict, (Threads.threadid(),k)) do
             zeros(Float64, k)
         end
-        zs_thr = get!(zsthrdict, (Threads.threadid(),k)) do
-            [zeros(Float64, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        foreach(z->fill!(z, 0.0), zs_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                wi = w ≡ nothing ? 1 : w[i]
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += wi * data[l,i]
-                end
-                zs_thr[id][j] += wi
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        zs = zeros(k)
-        for zz in zs_thr
-            zs .+= zz
-        end
+        _sum_clustered_data!(new_centroids, zs, data, c, stable, w)
+
         fill!(active, false)
         @inbounds for j = 1:k
             stable[j] && continue
@@ -1120,37 +1150,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        δc .= 0.0
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         r[.~stable] .= 0.0
         lk = Threads.SpinLock()
         @inbounds Threads.@threads for i = 1:n # TODO: threads
@@ -1211,37 +1215,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        δc .= 0.0
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
             δcj = δc[j]
@@ -1281,38 +1259,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                ncj = @view new_centroids_thr[id][:,j]
-                datai = @view data[:,i]
-                @simd for l = 1:m
-                    ncj[l] += datai[l]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        δc .= 0.0
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
             δcj = δc[j]
@@ -1367,37 +1318,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        δc .= 0.0
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
             δcj = δc[j]
@@ -1436,37 +1361,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        δc .= 0.0
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         @inbounds for i = 1:n
             ci = c[i]
             lbi = @view lb[:,i]
@@ -1493,41 +1392,13 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        fill!(δc, 0.0)
-        fill!(active, false)
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            @assert δc[j] > 0
-            active[j] = true
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
-        # @assert active == .~stable
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
+        active .= .~stable
+
         @inbounds for i = 1:n
             lbi = @view lb[:,i]
             @simd for j in 1:k
@@ -1548,37 +1419,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
-        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
-            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
-        end
 
-        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-        Threads.@threads for i = 1:n
-            @inbounds begin
-                j = c[i]
-                stable[j] && continue
-                id = Threads.threadid()
-                nc = new_centroids_thr[id]
-                @simd for l = 1:m
-                    nc[l,j] += data[l,i]
-                end
-            end
-        end
-        fill!(new_centroids, 0.0)
-        for nc_thr in new_centroids_thr
-            new_centroids .+= nc_thr
-        end
-        fill!(δc, 0.0)
-        @inbounds for j = 1:k
-            stable[j] && continue
-            z = csizes[j]
-            z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
-        end
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
         fill!(δcₘ, 0.0)
         fill!(δcₛ, 0.0)
         fill!(jₘ, 0)
