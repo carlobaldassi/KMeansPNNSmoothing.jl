@@ -109,7 +109,7 @@ struct Exponion <: Accelerator
         cdist = [@inbounds @views √_cost(centroids[:,j], centroids[:,j′]) for j = 1:k, j′ = 1:k]
         s = [@inbounds minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k) for j = 1:k]
         r = fill(Inf, n)
-        ann = [@views SortedAnnuli(cdist[:,j]) for j in 1:k]
+        ann = [@views SortedAnnuli(cdist[:,j], j) for j in 1:k]
         stable = falses(k)
         return new(config, G, δc, lb, ub, cdist, s, r, ann, stable)
     end

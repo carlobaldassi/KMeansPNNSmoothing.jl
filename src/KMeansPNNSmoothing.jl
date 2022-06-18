@@ -1274,7 +1274,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                     s[j] = cd
                 end
             end
-            update!(ann[j], cdj, stable)
+            update!(ann[j], cdj, j, stj ? stable : nothing)
         end
         @inbounds for i = 1:n
             r[i] = 2.0 * ub[i] + s[c[i]]

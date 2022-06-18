@@ -14,21 +14,24 @@ struct SortedAnnuli
     dcache::Vector{Float64}
     icache::Vector{Int}
     jcache::Vector{Int}
-    function SortedAnnuli(dist::AbstractVector{Float64})
-        k = length(dist)
+    function SortedAnnuli(dist::AbstractVector{Float64}, i₀::Int)
+        @assert dist[i₀] == 0.0
+        k = length(dist) - 1
         G = ceil(Int, log2(k+2)-1) # ensures sum(2^f for f=1:G) == 2^(G+1)-2 ≥ k
         perm = sortperm(dist)
+        @assert perm[1] == i₀
         ws = [BitSet() for f = 1:G]
         cws = [BitSet() for f = 1:G]
         es = Vector{Float64}(undef, G)
-        inds = zeros(Int, k)
+        inds = zeros(Int, k+1)
+        inds[i₀] = -10^5 # sentinel
         d₀ = 0.0
         i₀ = 0
         @inbounds for f = 1:G
             sz = 2^f
             i₁ = min(i₀+sz, k)
             for i in (i₀+1):i₁
-                x = perm[i]
+                x = perm[i+1]
                 push!(ws[f], x)
                 inds[x] = f
             end
@@ -54,14 +57,17 @@ struct SortedAnnuli
     end
 end
 
-function _check(ann::SortedAnnuli, dist::AbstractVector{Float64})
+function _check(ann::SortedAnnuli, dist::AbstractVector{Float64}, i₀::Int)
     @extract ann : k G ws cws inds es
+    @assert dist[i₀] == 0.0
     @assert sum(2^f for f = 1:G) ≥ k
-    for i = 1:k
+    for i = 1:k+1
+        i == i₀ && continue
         @assert 1 ≤ inds[i] ≤ G
         @assert i ∈ ws[inds[i]]
     end
-    @assert collect(∪(ws...)) == 1:k
+    @assert inds[i₀] == -10^5
+    @assert collect(∪(ws...)) == deleteat!(collect(1:k+1), i₀)
     @assert issorted(es)
     for f = 1:G
         if f < G
@@ -70,6 +76,7 @@ function _check(ann::SortedAnnuli, dist::AbstractVector{Float64})
             @assert length(ws[f]) == 2^G - (2^(G+1)-2-k)
         end
         for i in ws[f]
+            @assert i ≠ i₀
             @assert dist[i] ≤ es[f]
         end
         if f > 1
@@ -78,7 +85,8 @@ function _check(ann::SortedAnnuli, dist::AbstractVector{Float64})
             end
         end
     end
-    for i = 1:k
+    for i = 1:k+1
+        i == i₀ && continue
         f = searchsortedfirst(es, dist[i])
         @assert inds[i] == f
     end
@@ -87,10 +95,12 @@ function _check(ann::SortedAnnuli, dist::AbstractVector{Float64})
     end
 end
 
-function update!(ann::SortedAnnuli, newdist::AbstractVector{Float64}, ignore::Union{BitVector,Nothing} = nothing)
+function update!(ann::SortedAnnuli, newdist::AbstractVector{Float64}, i₀::Int, ignore::Union{BitVector,Nothing} = nothing)
     @extract ann : k G ws cws inds es dcache icache jcache
-    @assert length(newdist) == k
-    @inbounds for i = 1:k
+    @assert length(newdist) == k+1
+    @assert newdist[i₀] == 0.0
+    @inbounds for i = 1:k+1
+        i == i₀ && continue
         ignore ≢ nothing && ignore[i] && continue
         oldf = inds[i]
         ndi = newdist[i]
@@ -178,7 +188,7 @@ function update!(ann::SortedAnnuli, newdist::AbstractVector{Float64}, ignore::Un
         copy!(cws[f], cws[f-1])
         union!(cws[f], ws[f])
     end
-    # _check(ann, newdist)
+    # _check(ann, newdist, i₀)
     return ann
 end
 
