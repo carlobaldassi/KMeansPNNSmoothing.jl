@@ -500,7 +500,8 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
-            nci = sorted_neighb[ci]
+            nci = neighb[ci]
+            length(nci) == 0 && continue
             if nstable[ci] && stable[ci]
                 skip = true
                 for j in nci
@@ -512,23 +513,23 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
             v = costs[i] # was set when computing r
             d = √v
             @assert d ≤ r[ci]
-            length(nci) == 0 && continue
+            snci = sorted_neighb[ci]
             if !did_sort[ci]
                 @lock lk2 begin
                     if !did_sort[ci] # maybe some thread did it while we were waiting...
-                        sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
+                        sort!(snci, by=j′->cdist[j′,ci], alg=QuickSort)
                         did_sort[ci] = true
                     end
                 end
             end
-            # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
-            lb = cdist[nci[1], ci] / 2
+            # @assert cdist[first(snci), ci] == minimum(cdist[snci, ci])
+            lb = cdist[snci[1], ci] / 2
             d < lb && continue
             x = ci
             datai = @view data[:,i]
-            for h = 1:length(nci)
-                j = nci[h]
-                ub = (h == length(nci)) ? r[ci] : (cdist[nci[h+1], ci] / 2)
+            for h = 1:length(snci)
+                j = snci[h]
+                ub = (h == length(snci)) ? r[ci] : (cdist[snci[h+1], ci] / 2)
                 # @assert lb ≤ ub
                 @views v′ = _cost(datai, centroids[:,j])
                 if v′ < v
