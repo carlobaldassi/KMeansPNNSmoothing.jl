@@ -86,6 +86,59 @@ function reset!(accel::Hamerly)
     return accel
 end
 
+include("Annuli.jl")
+using .Annuli
+
+struct Exponion <: Accelerator
+    config::Configuration{Exponion}
+    G::Int
+    δc::Vector{Float64}
+    lb::Vector{Float64}
+    ub::Vector{Float64}
+    cdist::Matrix{Float64}
+    s::Vector{Float64}
+    r::Vector{Float64}
+    ann::Vector{SortedAnnuli}
+    stable::BitVector
+    function Exponion(config::Configuration{Exponion})
+        @extract config : n k centroids
+        G = ceil(Int, log2(k))
+        δc = zeros(k)
+        lb = zeros(n)
+        ub = fill(Inf, n)
+        cdist = [@inbounds @views √_cost(centroids[:,j], centroids[:,j′]) for j = 1:k, j′ = 1:k]
+        s = [@inbounds minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k) for j = 1:k]
+        r = fill(Inf, n)
+        ann = [@views SortedAnnuli(cdist[:,j]) for j in 1:k]
+        stable = falses(k)
+        return new(config, G, δc, lb, ub, cdist, s, r, ann, stable)
+    end
+    function Base.copy(accel::Exponion)
+        @extract accel : config G δc lb ub cdist s r ann
+        return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(r), copy(ann), copy(stable))
+    end
+end
+
+function reset!(accel::Exponion)
+    @extract accel : config δc lb ub cdist s r ann
+    @extract config : k centroids
+    fill!(δc, 0.0)
+    fill!(lb, 0.0)
+    fill!(ub, Inf)
+    @inbounds for j = 1:k
+        mincd = Inf
+        for j′ = 1:k
+            cdist[j′,j] = @views √_cost(centroids[:,j], centroids[:,j′])
+            j′ ≠ j && (mincd = min(mincd, cdist[j′,j]))
+        end
+        s[j] = mincd # minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k)
+        ann[j] = SortedAnnuli(@view cdist[:,j])
+    end
+    fill!(r, Inf)
+    fill!(stable, false)
+    return accel
+end
+
 
 struct SHam <: Accelerator
     config::Configuration{SHam}

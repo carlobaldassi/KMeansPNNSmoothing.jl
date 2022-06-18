@@ -86,7 +86,7 @@ end
 
 complete_initialization!(config::Configuration{<:Union{Naive,ReducedComparison,KBall,SHam,RElk}}, data::Matrix{Float64}) = config
 
-function complete_initialization!(config::Configuration{<:Union{Hamerly,SElk}}, data::Matrix{Float64})
+function complete_initialization!(config::Configuration{<:Union{Hamerly,SElk,Exponion}}, data::Matrix{Float64})
     @extract config: n costs accel
     @extract accel: ub
 
@@ -184,21 +184,25 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
     return num_chgd
 end
 
-function partition_from_centroids_from_scratch!(config::Configuration{Hamerly}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Hamerly,Exponion}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
-    @extract accel: lb ub
+    @extract accel: lb ub stable
     @assert size(data) == (m, n)
 
-    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+    w ≡ nothing || error("w unsupported with Hamerly or Exponion accelerator method")
 
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for t = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
+        # costsij = costsij_th[Threads.threadid()]
         @inbounds begin
+            datai = @view data[:,i]
             v1, v2, x1 = Inf, Inf, 0
             for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
+                v′ = _cost(datai, @view centroids[:,j])
                 if v′ < v1
                     v2 = v1
                     v1, x1 = v′, j
@@ -212,6 +216,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Hamerly}, 
         end
     end
     num_chgd = n
+    fill!(stable, false)
     cost = sum(costs)
     update_csizes!(config)
 
@@ -520,22 +525,23 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
         @inbounds begin
             ci = c[i]
             lbi, ubi = lb[i], ub[i]
-            r = s[ci] / 2
-            lbr = max(lbi, r)
+            hs = s[ci] / 2
+            lbr = max(lbi, hs)
             lbr > ubi && continue
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
             ub[i] = √v
             lbr > ub[i] && continue
 
-            v1, v2, x1, x2 = Inf, Inf, 0, 0
+            v1, v2, x1 = v, Inf, ci
             for j in 1:k
+                j == ci && continue
                 @views v′ = _cost(data[:,i], centroids[:,j])
                 if v′ < v1
-                    v2, x2 = v1, x1
+                    v2 = v1
                     v1, x1 = v′, j
                 elseif v′ < v2
-                    v2, x2 = v′, j
+                    v2 = v′
                 end
             end
             x1 ≠ ci && (num_chgd_th[Threads.threadid()] += 1)
@@ -546,6 +552,80 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Matrix{
     num_chgd = sum(num_chgd_th)
     cost = sum(costs)
     update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids!(config::Configuration{Exponion}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb ub s r ann stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Exponion accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    num_chgd_th = zeros(Int, Threads.nthreads())
+    js_th = [BitSet() for t = 1:Threads.nthreads()]
+    fill!(stable, true)
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            lbi, ubi = lb[i], ub[i]
+            hs = s[ci] / 2
+            lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
+            lbr > ubi && continue
+            datai = @view data[:,i]
+            v = _cost(datai, @view centroids[:,ci])
+            costs[i] = v
+            ub[i] = √v
+            lbr > ub[i] && continue
+
+            anni = ann[ci]
+            # js = js_th[Threads.threadid()]
+            # empty!(js)
+            # for f in 1:anni.G
+            #     union!(js, anni.ws[f])
+            #     anni.es[f] ≥ r[i] && break
+            # end
+            # delete!(js, ci)
+            f = 1
+            for outer f in 1:anni.G
+                anni.es[f] ≥ r[i] && break
+            end
+            js = anni.cws[f]
+            # js = copy(anni.cws[f])
+            # delete!(js, ci)
+
+            v1, v2, x1 = v, Inf, ci
+            for j in js
+                j == ci && continue
+                v′ = _cost(datai, @view centroids[:,j])
+                if v′ < v1
+                    v2 = v1
+                    v1, x1 = v′, j
+                elseif v′ < v2
+                    v2 = v′
+                end
+            end
+            if x1 ≠ ci
+                num_chgd_th[Threads.threadid()] += 1
+                stable[x1] = false
+                stable[ci] = false
+                csizes[x1] += 1
+                csizes[ci] -= 1
+            end
+            costs[i], c[i], = v1, x1
+            ub[i], lb[i] = √v1, √v2
+        end
+    end
+    num_chgd = sum(num_chgd_th)
+    cost = sum(costs)
+    # update_csizes!(config)
 
     config.cost = cost
     DataLogging.@log "DONE time: $t cost: $cost"
@@ -570,12 +650,13 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Matrix{Flo
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
             lbi = lb[i]
-            r = s[ci] / 2
-            lbr = max(lbi, r)
+            hs = s[ci] / 2
+            lbr = max(lbi, hs)
             lbr > √v && continue
 
-            v1, v2, x1 = Inf, Inf, 0
+            v1, v2, x1 = v, Inf, ci
             for j in 1:k
+                j == ci && continue
                 @views v′ = _cost(data[:,i], centroids[:,j])
                 if v′ < v1
                     v2 = v1
@@ -813,12 +894,12 @@ end
 
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
-function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang,Exponion}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
     @extract accel: ub
     @assert size(data) == (m, n)
 
-    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+    w ≡ nothing || error("w unsupported with Hamerly, Yinyang or Exponion accelerator method")
 
     DataLogging.@push_prefix! "SYNC"
     t = @elapsed Threads.@threads for i in 1:n
@@ -1111,6 +1192,92 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                     s[j] = cd
                 end
             end
+        end
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{Exponion}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c costs centroids csizes accel
+        @extract accel: G δc lb ub cdist s r ann stable
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with Exponion accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+        new_centroids_thr = get!(centroidsthrdict, (Threads.threadid(),m,k)) do
+            [zeros(Float64, m, k) for id in 1:Threads.nthreads()]
+        end
+
+        foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
+        Threads.@threads for i = 1:n
+            @inbounds begin
+                j = c[i]
+                stable[j] && continue
+                id = Threads.threadid()
+                ncj = @view new_centroids_thr[id][:,j]
+                datai = @view data[:,i]
+                @simd for l = 1:m
+                    ncj[l] += datai[l]
+                end
+            end
+        end
+        fill!(new_centroids, 0.0)
+        for nc_thr in new_centroids_thr
+            new_centroids .+= nc_thr
+        end
+        δc .= 0.0
+        @inbounds for j = 1:k
+            stable[j] && continue
+            z = csizes[j]
+            z > 0 || continue
+            new_centroids[:,j] ./= z
+            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
+            for l = 1:m
+                centroids[l,j] = new_centroids[l,j]
+            end
+        end
+        δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
+        @inbounds for j = 1:k
+            δcj = δc[j]
+            if δcj > δcₘ
+                δcₛ = δcₘ
+                δcₘ, jₘ = δcj, j
+            elseif δcj > δcₛ
+                δcₛ = δcj
+            end
+        end
+        @inbounds for i = 1:n
+            ub[i] += δc[c[i]]
+        end
+        @inbounds for i = 1:n
+            lb[i] -= ifelse(c[i] == jₘ, δcₛ, δcₘ)
+        end
+
+        @inbounds for j = 1:k
+            stj = stable[j]
+            cdj = @view cdist[:,j]
+            s[j] = Inf
+            for j′ = 1:k
+                j′ == j && continue
+                if stj && stable[j′]
+                    cd = cdj[j′]
+                # elseif j′ < j
+                #     cd = cdist[j, j′]
+                #     cdist[j′,j] = cd
+                else
+                    @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                    cdj[j′] = cd
+                end
+                if cd < s[j]
+                    s[j] = cd
+                end
+            end
+            update!(ann[j], cdj, stable)
+        end
+        @inbounds for i = 1:n
+            r[i] = 2.0 * ub[i] + s[c[i]]
         end
         return config
     end
