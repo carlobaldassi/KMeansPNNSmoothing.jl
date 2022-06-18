@@ -9,11 +9,26 @@ reset!(accel::Naive) = accel
 struct ReducedComparison <: Accelerator
     config::Configuration
     active::BitVector
-    ReducedComparison(config::Configuration{ReducedComparison}) = new(config, trues(size(config.centroids,2)))
-    Base.copy(accel::ReducedComparison) = new(accel.config, copy(accel.active))
+    stable::BitVector
+    function ReducedComparison(config::Configuration{ReducedComparison})
+        @extract config : centroids
+        m, k = size(centroids)
+        active = trues(k)
+        stable = falses(k)
+        return new(config, active, stable)
+    end
+    function Base.copy(accel::ReducedComparison)
+        @extract accel : config active stable
+        return new(config, copy(active), copy(stable))
+    end
 end
 
-reset!(accel::ReducedComparison) = (fill!(accel.active, true); accel)
+function reset!(accel::ReducedComparison)
+    @extract accel : active stable
+    fill!(active, true)
+    fill!(stable, false)
+    return accel
+end
 
 struct KBall <: Accelerator
     config::Configuration{KBall}
@@ -60,22 +75,24 @@ struct Hamerly <: Accelerator
     lb::Vector{Float64}
     ub::Vector{Float64}
     s::Vector{Float64}
+    stable::BitVector
     function Hamerly(config::Configuration{Hamerly})
         @extract config : n k centroids
         δc = zeros(k)
         lb = zeros(n)
         ub = fill(Inf, n)
         s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        return new(config, δc, lb, ub, s)
+        stable = falses(k)
+        return new(config, δc, lb, ub, s, stable)
     end
     function Base.copy(accel::Hamerly)
-        @extract accel : config δc lb ub s
-        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s))
+        @extract accel : config δc lb ub s stable
+        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s), copy(stable))
     end
 end
 
 function reset!(accel::Hamerly)
-    @extract accel : config δc lb ub s
+    @extract accel : config δc lb ub s stable
     @extract config : k centroids
     fill!(δc, 0.0)
     fill!(lb, 0.0)
@@ -83,6 +100,7 @@ function reset!(accel::Hamerly)
     @inbounds for j = 1:k
         s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
     end
+    fill!(stable, false)
     return accel
 end
 
@@ -114,13 +132,13 @@ struct Exponion <: Accelerator
         return new(config, G, δc, lb, ub, cdist, s, r, ann, stable)
     end
     function Base.copy(accel::Exponion)
-        @extract accel : config G δc lb ub cdist s r ann
+        @extract accel : config G δc lb ub cdist s r ann stable
         return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(r), copy(ann), copy(stable))
     end
 end
 
 function reset!(accel::Exponion)
-    @extract accel : config δc lb ub cdist s r ann
+    @extract accel : config δc lb ub cdist s r ann stable
     @extract config : k centroids
     fill!(δc, 0.0)
     fill!(lb, 0.0)
@@ -132,40 +150,42 @@ function reset!(accel::Exponion)
             j′ ≠ j && (mincd = min(mincd, cdist[j′,j]))
         end
         s[j] = mincd # minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k)
-        ann[j] = SortedAnnuli(@view cdist[:,j])
+        ann[j] = SortedAnnuli(@view(cdist[:,j]), j)
     end
     fill!(r, Inf)
     fill!(stable, false)
     return accel
 end
 
-
 struct SHam <: Accelerator
     config::Configuration{SHam}
     δc::Vector{Float64}
     lb::Vector{Float64}
     s::Vector{Float64}
+    stable::BitVector
     function SHam(config::Configuration)
         @extract config : n k centroids
         δc = zeros(k)
         lb = zeros(n)
         s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        return new(config, δc, lb, s)
+        stable = falses(k)
+        return new(config, δc, lb, s, stable)
     end
     function Base.copy(accel::SHam)
-        @extract accel : config δc lb s
-        return new(accel.config, copy(δc), copy(lb), copy(s))
+        @extract accel : config δc lb s stable
+        return new(accel.config, copy(δc), copy(lb), copy(s), copy(stable))
     end
 end
 
 function reset!(accel::SHam)
-    @extract accel : config δc lb s
+    @extract accel : config δc lb s stable
     @extract config : k cnentroids
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     @inbounds for j = 1:k
         s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
     end
+    fill!(stable, false)
     return accel
 end
 
@@ -190,7 +210,7 @@ struct SElk <: Accelerator
 end
 
 function reset!(accel::SElk)
-    @extract accel : δc lb ub
+    @extract accel : δc lb ub stable
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(ub, Inf)
@@ -220,7 +240,7 @@ struct RElk <: Accelerator
 end
 
 function reset!(accel::RElk)
-    @extract accel : δc lb active
+    @extract accel : δc lb active stable
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(active, true)

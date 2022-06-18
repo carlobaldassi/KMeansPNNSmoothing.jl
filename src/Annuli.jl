@@ -95,7 +95,7 @@ function _check(ann::SortedAnnuli, dist::AbstractVector{Float64}, i₀::Int)
     end
 end
 
-function update!(ann::SortedAnnuli, newdist::AbstractVector{Float64}, i₀::Int, ignore::Union{BitVector,Nothing} = nothing)
+function update!(ann::SortedAnnuli, newdist::AbstractVector{Float64}, i₀::Int, ignore::Union{BitVector,Vector{Bool},Nothing} = nothing)
     @extract ann : k G ws cws inds es dcache icache jcache
     @assert length(newdist) == k+1
     @assert newdist[i₀] == 0.0
