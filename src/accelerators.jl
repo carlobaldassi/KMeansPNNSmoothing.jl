@@ -45,8 +45,8 @@ struct KBall <: Accelerator
         r = fill(Inf, k)
         cdist = [@inbounds @views √_cost(centroids[:,i], centroids[:,j]) for i = 1:k, j = 1:k] # TODO
         neighb = [deleteat!(collect(1:k), j) for j = 1:k]
-        stable = falses(k)
-        nstable = falses(k)
+        stable = fill(false, k)
+        nstable = fill(false, k)
         return new(config, δc, r, cdist, neighb, stable, nstable)
     end
     function Base.copy(accel::KBall)

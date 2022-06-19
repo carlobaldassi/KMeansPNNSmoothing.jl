@@ -491,52 +491,43 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Matrix{Fl
 
     # @assert all(c .> 0)
 
-    new_stable = trues(k)
+    new_stable = fill!(similar(stable), true)
     sorted_neighb = copy.(neighb)
-    did_sort = falses(k)
+    did_sort = fill(false, k)
     num_chgd = 0
     lk = Threads.SpinLock()
     lk2 = ReentrantLock()
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
-            nci = neighb[ci]
+            nstable[ci] && continue
+            nci = sorted_neighb[ci]
             length(nci) == 0 && continue
-            if nstable[ci] && stable[ci]
-                skip = true
-                for j in nci
-                    stable[j] || (skip = false; break)
-                end
-                skip && continue
-            end
             # @views v = _cost(data[:,i], centroids[:,ci])
             v = costs[i] # was set when computing r
             d = √v
             @assert d ≤ r[ci]
-            snci = sorted_neighb[ci]
             if !did_sort[ci]
                 @lock lk2 begin
                     if !did_sort[ci] # maybe some thread did it while we were waiting...
-                        sort!(snci, by=j′->cdist[j′,ci], alg=QuickSort)
+                        sort!(nci, by=j′->cdist[j′,ci], alg=QuickSort)
                         did_sort[ci] = true
                     end
                 end
             end
-            # @assert cdist[first(snci), ci] == minimum(cdist[snci, ci])
-            lb = cdist[snci[1], ci] / 2
-            d < lb && continue
+            # @assert cdist[first(nci), ci] == minimum(cdist[nci, ci])
+            d ≤ cdist[nci[1], ci] / 2 && continue
             x = ci
             datai = @view data[:,i]
-            for h = 1:length(snci)
-                j = snci[h]
-                ub = (h == length(snci)) ? r[ci] : (cdist[snci[h+1], ci] / 2)
-                # @assert lb ≤ ub
+            nn = length(nci)
+            for h = 1:nn
+                j = nci[h]
                 @views v′ = _cost(datai, centroids[:,j])
                 if v′ < v
                     v, x = v′, j
                 end
-                lb < d ≤ ub && break
-                lb = ub
+                h == nn && break
+                d ≤ cdist[nci[h+1], ci] / 2 && break
             end
             if x ≠ ci
                 @lock lk begin
@@ -1058,9 +1049,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 wi = w ≡ nothing ? 1 : w[i]
                 stable ≢ nothing && stable[j] && continue
                 id = Threads.threadid()
-                nc = new_centroids_thr[id]
+                ncj = @view new_centroids_thr[id][:,j]
+                datai = @view data[:,i]
                 @simd for l = 1:m
-                    nc[l,j] += wi * data[l,i]
+                    ncj[l] += wi * datai[l]
                 end
                 zs_thr[id][j] += wi
             end
@@ -1082,11 +1074,11 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             stable[j] && continue
             z = csizes[j]
             z > 0 || continue
-            new_centroids[:,j] ./= z
-            @views δc[j] = √_cost(centroids[:,j], new_centroids[:,j])
-            for l = 1:m
-                centroids[l,j] = new_centroids[l,j]
-            end
+            centrj = @view centroids[:,j]
+            ncentrj = @view new_centroids[:,j]
+            ncentrj ./= z
+            δc[j] = √_cost(centrj, ncentrj)
+            centrj[:] = ncentrj
         end
     end
 
@@ -1158,7 +1150,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         r[.~stable] .= 0.0
         lk = Threads.SpinLock()
-        @inbounds Threads.@threads for i = 1:n # TODO: threads
+        @inbounds Threads.@threads for i = 1:n
             j = c[i]
             stable[j] && continue
             # r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
@@ -1186,22 +1178,24 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         fill!(nstable, false)
         old_nj = Int[]
-        sizehint!(old_nj, k)
+        sizehint!(old_nj, k-1)
         @inbounds for j = 1:k
             nj = neighb[j]
             resize!(old_nj, length(nj))
             copy!(old_nj, nj)
             resize!(nj, k-1)
             ind = 0
+            allstable = stable[j]
             for j′ = 1:k
                 j′ == j && continue
                 if cdist[j′, j] < 2r[j]
                     ind += 1
                     nj[ind] = j′
+                    stable[j′] || (allstable = false)
                 end
             end
             resize!(nj, ind)
-            nj == old_nj && (nstable[j] = true)
+            allstable && nj == old_nj && (nstable[j] = true)
         end
         return config
     end
@@ -1304,7 +1298,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             update!(ann[j], cdj, j, stj ? stable : nothing)
         end
         @inbounds for i = 1:n
-            r[i] = 2.0 * ub[i] + s[c[i]]
+            r[i] = 2ub[i] + s[c[i]]
         end
         return config
     end
