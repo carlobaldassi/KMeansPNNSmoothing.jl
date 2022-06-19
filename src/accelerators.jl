@@ -115,7 +115,6 @@ struct Exponion <: Accelerator
     ub::Vector{Float64}
     cdist::Matrix{Float64}
     s::Vector{Float64}
-    r::Vector{Float64}
     ann::Vector{SortedAnnuli}
     stable::BitVector
     function Exponion(config::Configuration{Exponion})
@@ -124,35 +123,39 @@ struct Exponion <: Accelerator
         δc = zeros(k)
         lb = zeros(n)
         ub = fill(Inf, n)
-        cdist = [@inbounds @views √_cost(centroids[:,j], centroids[:,j′]) for j = 1:k, j′ = 1:k]
-        s = [@inbounds minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k) for j = 1:k]
-        r = fill(Inf, n)
+        # cdist = [@inbounds @views √_cost(centroids[:,j], centroids[:,j′]) for j = 1:k, j′ = 1:k]
+        # s = [@inbounds minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k) for j = 1:k]
+        cdist = ones(k, k)
+        for j = 1:k
+           cdist[j,j] = 0.0
+        end
+        s = zeros(k)
         ann = [@views SortedAnnuli(cdist[:,j], j) for j in 1:k]
         stable = falses(k)
-        return new(config, G, δc, lb, ub, cdist, s, r, ann, stable)
+        return new(config, G, δc, lb, ub, cdist, s, ann, stable)
     end
     function Base.copy(accel::Exponion)
-        @extract accel : config G δc lb ub cdist s r ann stable
-        return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(r), copy(ann), copy(stable))
+        @extract accel : config G δc lb ub cdist s ann stable
+        return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(ann), copy(stable))
     end
 end
 
 function reset!(accel::Exponion)
-    @extract accel : config δc lb ub cdist s r ann stable
+    @extract accel : config δc lb ub cdist s ann stable
     @extract config : k centroids
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(ub, Inf)
     @inbounds for j = 1:k
+        cdistj = @view cdist[:,j]
         mincd = Inf
         for j′ = 1:k
-            cdist[j′,j] = @views √_cost(centroids[:,j], centroids[:,j′])
-            j′ ≠ j && (mincd = min(mincd, cdist[j′,j]))
+            cdistj[j′] = @views √_cost(centroids[:,j], centroids[:,j′])
+            j′ ≠ j && (mincd = min(mincd, cdistj[j′]))
         end
         s[j] = mincd # minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k)
-        ann[j] = SortedAnnuli(@view(cdist[:,j]), j)
+        update!(ann[j], cdistj, j)
     end
-    fill!(r, Inf)
     fill!(stable, false)
     return accel
 end

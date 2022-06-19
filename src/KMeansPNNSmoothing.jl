@@ -609,7 +609,7 @@ end
 
 function partition_from_centroids!(config::Configuration{Exponion}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
-    @extract accel: δc lb ub s r ann stable
+    @extract accel: δc lb ub s ann stable
     @assert size(data) == (m, n)
 
     w ≡ nothing || error("w unsupported with Exponion accelerator method")
@@ -633,11 +633,13 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Matrix
             ub[i] = √v
             lbr > ub[i] && continue
 
+            ri = 2 * (ubi + hs)
             anni = ann[ci]
-            f = 1
-            for outer f in 1:anni.G
-                anni.es[f] ≥ r[i] && break
-            end
+            # f = min(searchsortedfirst(anni.es, ri), anni.G)
+            # f = 1
+            # for outer f in 1:anni.G
+            #     anni.es[f] ≥ ri && break
+            # end
             js = anni.cws[f]
 
             v1, v2, x1 = v, Inf, ci
@@ -1246,7 +1248,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
     global function centroids_from_partition!(config::Configuration{Exponion}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
         @extract config: m k n c costs centroids csizes accel
-        @extract accel: G δc lb ub cdist s r ann stable
+        @extract accel: G δc lb ub cdist s ann stable
         @assert size(data) == (m, n)
 
         w ≡ nothing || error("w unsupported with Exponion accelerator method")
@@ -1296,9 +1298,6 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 end
             end
             update!(ann[j], cdj, j, stj ? stable : nothing)
-        end
-        @inbounds for i = 1:n
-            r[i] = 2ub[i] + s[c[i]]
         end
         return config
     end
