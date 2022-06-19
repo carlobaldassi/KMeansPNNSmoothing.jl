@@ -640,7 +640,8 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Matrix
             # for outer f in 1:anni.G
             #     anni.es[f] ≥ ri && break
             # end
-            js = anni.cws[f]
+            # js = anni.cws[f]
+            js = get_inds(anni, ri)
 
             v1, v2, x1 = v, Inf, ci
             for j in js
@@ -1297,7 +1298,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                     s[j] = cd
                 end
             end
-            update!(ann[j], cdj, j, stj ? stable : nothing)
+            # update!(ann[j], cdj, j, stj ? stable : nothing) # only for SortedAnnuli
+            update!(ann[j], cdj, j)
         end
         return config
     end

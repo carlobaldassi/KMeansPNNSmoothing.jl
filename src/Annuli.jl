@@ -230,64 +230,55 @@ struct SimplerAnnuli
     G::Int
     es::Vector{Float64}
     pperm::Vector{Int}
-    epos::Vector{Int}
-    done::BitVector
+    dcache::Vector{Float64}
     icache::Vector{Int}
+    jcache::Vector{Int}
     function SimplerAnnuli(k)
         G = ceil(Int, log2(k+2)-1) # ensures sum(2^f for f=1:G) == 2^(G+1)-2 ≥ k
         es = fill(Inf, G)
-        pperm = zeros(Int, k)
-        epos = zeros(Int, G)
-        done = falses(k+1)
-        icache = [1:k+1;]
-        return new(k, G, es, pperm, epos, done, icache)
+        pperm = zeros(Int, k+1)
+        dcache = zeros(k+1)
+        icache = zeros(Int, k+1)
+        jcache = zeros(Int, k)
+        return new(k, G, es, pperm , dcache, icache, jcache)
     end
     function Base.copy(ann::SimplerAnnuli)
-        @extract ann : k G es pperm epos done icache
-        return new(k, G, copy(es), copy(pperm), copy(epos), copy(done), copy(icache))
+        @extract ann : k G es pperm
+        dcache = zeros(k+1)
+        icache = zeros(Int, k+1)
+        jcache = zeros(Int, k)
+        return new(k, G, copy(es), copy(pperm), dcache, icache, jcache)
     end
 end
 
 function update!(ann::SimplerAnnuli, dist::AbstractVector{Float64}, iₓ::Int)
-    @extract ann : k G es pperm epos done icache
+    @extract ann : k G es pperm dcache icache jcache
 
     @assert length(dist) == k + 1
     @assert dist[iₓ] == 0.0
-    dist[iₓ] = Inf # make it go to the end when sorting
+    copy!(dcache, dist)
+    dcache[iₓ] = Inf # make it go to the end when sorting
 
-    fill!(pperm, 0)
-    fill!(done, false)
-    done[iₓ] = true
+    pperm[:] .= 1:(k+1)
 
-    i = 0
-    @inbounds for f = 1:G
-        sz = 2^f
-        i = min(i+sz, k)
-        x = partialsortperm!(icache, dist, i)
-        es[f] = dist[x]
-        pperm[i] = x
-        epos[f] = i
-        done[x] = true
+    pperm[iₓ], pperm[end] = pperm[end], pperm[iₓ]
+    dcache[iₓ], dcache[end] = dcache[end], dcache[iₓ]
+
+    es[G] = Inf
+    @inbounds for f = G-1:-1:1
+        i = 2^(f+1)-2
+        sz = min(i + 2^(f+1), k)
+        # x = @views partialsortperm!(icache[1:sz], dist[pperm[1:sz]], i)
+        # es[f] = @views dist[pperm[1:sz]][x]
+        # pperm[1:sz] = pperm[@view icache[1:sz]]
+        x = @views partialsortperm!(icache[1:sz], dcache[1:sz], i)
+        es[f] = dcache[x]
+        # pperm[1:sz] .= pperm[@view icache[1:sz]]
+        jcache[1:sz] .= getindex.(Ref(pperm), @view icache[1:sz]) # trick to avoid allocations
+        pperm[1:sz] .= @view jcache[1:sz]
+        # dcache[1:i] .= dist[@view pperm[1:i]]
+        dcache[1:i] .= getindex.(Ref(dist), @view pperm[1:i]) # trick to avoid allocations
     end
-    # @assert i == k
-    # @show pperm
-    # @show epos
-    # @show es
-    @inbounds for x = 1:(k+1)
-        done[x] && continue
-        f = searchsortedfirst(es, dist[x])
-        # @assert 1 ≤ f ≤ G
-        i = epos[f] - 1
-        # @show ">>",x,f,i
-        # @assert pperm[i] == 0 f,i,pperm
-        pperm[i] = x
-        epos[f] = i
-        done[x] = true
-        # @show pperm
-        # @show epos
-        # println("---")
-    end
-    dist[iₓ] = 0.0
     # i₀ = 0
     # for f = 1:G
     #     sz = 2^f
@@ -300,22 +291,21 @@ function update!(ann::SimplerAnnuli, dist::AbstractVector{Float64}, iₓ::Int)
 end
 
 function _check(ann::SimplerAnnuli, dist::AbstractVector{Float64}, iₓ::Int)
-    @extract ann : k G es pperm epos done icache
+    @extract ann : k G es pperm
     @assert dist[iₓ] == 0.0
     @assert sum(2^f for f = 1:G) ≥ k
     @assert issorted(es)
-    @assert maximum(dist) == es[end]
-    @assert all(done)
-    @assert isperm([pperm; iₓ])
-    @assert isperm(icache)
+    # @assert maximum(dist) == es[end]
+    @assert isperm(pperm)
+    @assert pperm[end] == iₓ
     i₀ = 0
-    e₀ = 0.0
+    e₀ = -Inf
     for f = 1:G
         sz = 2^f
         i₁ = min(i₀+sz, k)
         e₁ = es[f]
         @assert all(e₀ .≤ dist[pperm[(i₀+1):i₁]] .≤ e₁)
-        i₀ = i₁
+        i₀, e₀ = i₁, e₁
     end
 end
 
