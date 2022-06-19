@@ -1983,7 +1983,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Matrix{Float64}, :
     end
     if k == tgt_k
         DataLogging.@pop_prefix!
-        return config
+        return Configuration{A}(data, centroids)
     end
 
     # csizes′ = zeros(Int, k)
