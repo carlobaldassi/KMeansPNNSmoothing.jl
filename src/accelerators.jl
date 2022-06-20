@@ -310,15 +310,15 @@ struct Yinyang <: Accelerator
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable)
     end
     function Base.copy(accel::Yinyang)
-        @extract accel : config δc δcₘ δcₛ jₘ ub gind lb stable
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(gind), copy(lb), copy(stable))
+        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable
+        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable))
     end
 
 end
 
 function reset!(accel::Yinyang)
-    @extract accel : config δc δcₘ δcₛ jₘ ub gind lb stable
-    @extract config : c
+    @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable
+    @extract config : n c
     fill!(δc, 0.0)
     fill!(δcₘ, 0.0)
     fill!(δcₛ, 0.0)
