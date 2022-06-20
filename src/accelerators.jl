@@ -337,3 +337,88 @@ function reset!(accel::Yinyang)
     fill!(stable, false)
     return accel
 end
+
+struct Ryy <: Accelerator
+    config::Configuration{Ryy}
+    G::Int
+    δc::Vector{Float64}
+    δcₘ::Vector{Float64}
+    δcₛ::Vector{Float64}
+    jₘ::Vector{Float64}
+    ub::Vector{Float64}
+    groups::Vector{UnitRange{Int}}
+    gind::Vector{Int}
+    lb::Matrix{Float64}
+    stable::BitVector
+    active::BitVector
+    gactive::BitVector
+    function Ryy(config::Configuration)
+        @extract config : n k centroids
+        G = max(1, round(Int, k / 10))
+        δc = zeros(k)
+        δcₘ = zeros(G)
+        δcₛ = zeros(G)
+        jₘ = zeros(Int, G)
+        ub = fill(Inf, n)
+        gind = zeros(Int, n)
+        lb = zeros(G, n)
+        stable = falses(k)
+        active = trues(k)
+        gactive = trues(G)
+
+        ## cluster the centroids
+        groups = gen_groups(k, G)
+        if G > 1
+            ## we save/restore the RNG to make results comparable across accelerators
+            ## (especially relevant with KMPNNS seeders)
+            rng_bk = copy(Random.GLOBAL_RNG)
+            result = kmeans(centroids, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
+            copy!(Random.GLOBAL_RNG, rng_bk)
+            groups = UnitRange{Int}[]
+            new_centroids = similar(centroids)
+            ind = 0
+            for f = 1:G
+                gr_inds = findall(result.labels .== f)
+                gr_size = length(gr_inds)
+                r = ind .+ (1:gr_size)
+                new_centroids[:,r] = centroids[:,gr_inds]
+                push!(groups, r)
+                ind += gr_size
+            end
+            # @assert vcat(groups...) == 1:k
+            copy!(centroids, new_centroids)
+        else
+            groups = [1:k]
+        end
+        return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable, active, gactive)
+    end
+    function Base.copy(accel::Ryy)
+        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
+        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable), copy(active), copy(gactive))
+    end
+
+end
+
+function reset!(accel::Ryy)
+    @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
+    @extract config : n c
+    fill!(δc, 0.0)
+    fill!(δcₘ, 0.0)
+    fill!(δcₛ, 0.0)
+    fill!(jₘ, 0)
+    fill!(ub, Inf)
+    @inbounds for i = 1:n
+        ci = c[i]
+        for (f,gr) in enumerate(groups)
+            if last(gr) ≥ ci
+                gind[i] = f
+                break
+            end
+        end
+    end
+    fill!(lb, 0.0)
+    fill!(stable, false)
+    fill!(active, true)
+    fill!(gactive, true)
+    return accel
+end

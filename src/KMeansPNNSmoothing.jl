@@ -117,6 +117,24 @@ function complete_initialization!(config::Configuration{Yinyang}, data::Matrix{F
     return config
 end
 
+function complete_initialization!(config::Configuration{Ryy}, data::Matrix{Float64})
+    @extract config: n c costs accel
+    @extract accel: groups gind
+
+    @inbounds for i = 1:n
+        ci = c[i]
+        for (f,gr) in enumerate(groups)
+            if last(gr) ≥ ci
+                gind[i] = f
+                break
+            end
+        end
+    end
+
+    return config
+end
+
+
 function partition_from_centroids_from_scratch!(config::Configuration{Naive}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids
     @assert size(data) == (m, n)
@@ -408,6 +426,60 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
         end
     end
     num_chgd = n
+    fill!(stable, false)
+    cost = sum(costs)
+    update_csizes!(config)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: groups gind lb stable active gactive
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Ryy accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    t = @elapsed Threads.@threads for i in 1:n
+        costsij = costsij_th[Threads.threadid()]
+        @inbounds begin
+            v, x = Inf, 0
+            for j in 1:k
+                @views v′ = _cost(data[:,i], centroids[:,j])
+                costsij[j] = v′
+                if v′ < v
+                    v, x = v′, j
+                end
+            end
+            costs[i], c[i] = v, x
+            for (f,gr) in enumerate(groups)
+                if last(gr) ≥ x
+                    gind[i] = f
+                    break
+                end
+            end
+            lbi = @view lb[:,i]
+            for (f,gr) in enumerate(groups)
+                v′ = Inf
+                for j in gr
+                    j == x && continue
+                    v′ = min(v′, costsij[j])
+                end
+                lbi[f] = √v′
+            end
+        end
+    end
+    num_chgd = n
+    fill!(active, true)
+    fill!(gactive, true)
     fill!(stable, false)
     cost = sum(costs)
     update_csizes!(config)
@@ -949,6 +1021,97 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Matrix{
     return num_chgd
 end
 
+function partition_from_centroids!(config::Configuration{Ryy}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: G δc groups gind lb stable active gactive
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Ryy accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    # @assert all(1 .≤ gind .≤ G)
+    num_chgd = 0
+    fill!(stable, true)
+    lk = Threads.SpinLock()
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            fi = gind[i]
+            # @assert 1 ≤ ci ≤ k
+            # @assert 1 ≤ fi ≤ G
+            datai = @view data[:,i]
+            if active[ci]
+                old_v = costs[i]
+                @views v = _cost(datai, centroids[:,ci])
+                costs[i] = v
+                fullsearch = (v > old_v)
+            else
+                v = costs[i]
+                fullsearch = false
+            end
+            sv = √v
+            lbi = @view lb[:,i]
+            skip = true
+            for lbif in lbi
+                lbif ≤ sv && (skip = false; break)
+            end
+            skip && continue
+
+            old_fi = fi
+            x = ci
+            for (f,gr) in enumerate(groups)
+                lbi[f] > sv && continue
+                !fullsearch && !gactive[f] && continue
+                v1, v2, x1 = Inf, Inf, 0
+                for j in gr
+                    j == x && continue
+                    @views v′ = _cost(datai, centroids[:,j])
+                    if v′ < v1
+                        v2 = v1
+                        v1, x1 = v′, j
+                    elseif v′ < v2
+                        v2 = v′
+                    end
+                end
+                if v1 < v
+                    @assert x1 ≠ x
+                    lbi[f] = √v2
+                    if f ≠ fi
+                        lbi[fi] = min(lbi[fi], sv)
+                        fi = f
+                    else
+                        lbi[f] = min(lbi[f], sv)
+                    end
+                    v, x = v1, x1
+                    sv = √v
+                else
+                    lbi[f] = √v1
+                end
+            end
+            if x ≠ ci
+                @lock lk begin
+                    num_chgd += 1
+                    stable[x] = false
+                    stable[ci] = false
+                    csizes[x] += 1
+                    csizes[ci] -= 1
+                end
+            end
+            @assert 1 ≤ x ≤ k
+            costs[i], c[i] = v, x
+            gind[i] = fi
+        end
+    end
+    cost = sum(costs)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
 sync_costs!(config::Configuration, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
 function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang,Exponion}}, data::Matrix{Float64}, w::Union{Vector{<:Real},Nothing} = nothing)
@@ -1437,6 +1600,57 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @inbounds for i = 1:n
             ci = c[i]
             ub[i] += δc[ci]
+        end
+        @inbounds for i = 1:n
+            lbi = @view lb[:,i]
+            @simd for f = 1:G
+                lbi[f] -= δcₘ[f]
+            end
+        end
+        @inbounds for i = 1:n
+            ci = c[i]
+            fi = gind[i]
+            ci == jₘ[fi] || continue
+            lb[fi,i] -= (δcₛ[fi] - δcₘ[fi])
+        end
+        return config
+    end
+
+    global function centroids_from_partition!(config::Configuration{Ryy}, data::Matrix{Float64}, w::Union{AbstractVector{<:Real},Nothing})
+        @extract config: m k n c centroids csizes accel
+        @extract accel: G δc δcₘ δcₛ jₘ groups gind lb stable active gactive
+        @assert size(data) == (m, n)
+
+        w ≡ nothing || error("w unsupported with Ryy accelerator method")
+
+        new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
+            zeros(Float64, m, k)
+        end
+
+        _sum_clustered_data!(new_centroids, data, c, stable)
+
+        _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+
+        fill!(δcₘ, 0.0)
+        fill!(δcₛ, 0.0)
+        fill!(jₘ, 0)
+        fill!(active, false)
+        fill!(gactive, false)
+        for (f,gr) in enumerate(groups)
+            j₀ = first(gr) - 1
+            @inbounds for j in gr
+                δcj = δc[j]
+                if δcj > δcₘ[f]
+                    δcₛ[f] = δcₘ[f]
+                    δcₘ[f], jₘ[f] = δcj, j
+                elseif δcj > δcₛ[f]
+                    δcₛ[f] = δcj
+                end
+                if δcj > 0
+                    active[j] = true
+                    gactive[f] = true
+                end
+            end
         end
         @inbounds for i = 1:n
             lbi = @view lb[:,i]
