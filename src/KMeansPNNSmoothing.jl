@@ -2289,12 +2289,20 @@ function lloyd!(
         DataLogging.@log "it: $it cost: $(config.cost) num_chgd: $(num_chgd)$(found_empty ? " [found_empty]" : "")$(synched ? " [synched]" : "")"
         if num_chgd == 0 || (tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty && !synched)
             if !synched
+                old_new_cost = new_cost
                 sync_costs!(config, data, w)
                 new_cost = config.cost
+                synched = (new_cost ≠ old_new_cost)
             end
             verbose && println("converged cost = $new_cost")
             converged = true
             break
+        end
+        if it == max_it && !synched
+            old_new_cost = new_cost
+            sync_costs!(config, data, w)
+            new_cost = config.cost
+            synched = (new_cost ≠ old_new_cost)
         end
         verbose && println("lloyd it = $it cost = $new_cost num_chgd = $num_chgd" * (synched ? " [synched]" : ""))
     end
