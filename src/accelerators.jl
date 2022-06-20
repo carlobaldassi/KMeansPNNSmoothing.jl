@@ -115,7 +115,7 @@ struct Exponion <: Accelerator
     ub::Vector{Float64}
     cdist::Matrix{Float64}
     s::Vector{Float64}
-    ann::Vector{SimplerAnnuli}
+    ann::Vector{SortedAnnuli}
     stable::BitVector
     function Exponion(config::Configuration{Exponion})
         @extract config : n k centroids
@@ -130,8 +130,8 @@ struct Exponion <: Accelerator
            cdist[j,j] = 0.0
         end
         s = zeros(k)
-        # ann = [@views SortedAnnuli(cdist[:,j], j) for j in 1:k]
-        ann = [SimplerAnnuli(k-1) for j in 1:k]
+        ann = [@views SortedAnnuli(cdist[:,j], j) for j in 1:k]
+        # ann = [SimplerAnnuli(k-1, j) for j in 1:k]
         stable = falses(k)
         return new(config, G, δc, lb, ub, cdist, s, ann, stable)
     end
@@ -155,7 +155,7 @@ function reset!(accel::Exponion)
             j′ ≠ j && (mincd = min(mincd, cdistj[j′]))
         end
         s[j] = mincd # minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k)
-        update!(ann[j], cdistj, j)
+        update!(ann[j], cdistj)
     end
     fill!(stable, false)
     return accel
