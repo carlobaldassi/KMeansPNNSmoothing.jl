@@ -229,66 +229,47 @@ end
 
 
 ## This relies on the (undocumented) property of partialsort!(v, k) that it partitions
-## the input, such that maximum(v[1:k] ≤ minimum(v[((k+1):end])
-## In the end, it's not that much simpler than SortedAnnuli, but it seems to be (very slightly)
-## slower in practice
+## the input, such that maximum(v[1:k]) ≤ minimum(v[(k+1):end])
 struct SimplerAnnuli
     k::Int
     G::Int
     iₓ::Int
     es::Vector{Float64}
     pperm::Vector{Int}
-    sdist::Vector{Float64}
-    initialized::Ref{Bool}
-    dcache::Vector{Float64}
-    icache::Vector{Int}
-    jcache::Vector{Int}
+    sdist::Vector{Tuple{Float64,Int}}
     function SimplerAnnuli(k::Int, iₓ::Int)
         G = ceil(Int, log2(k+2)-1) # ensures sum(2^f for f=1:G) == 2^(G+1)-2 ≥ k
         es = fill(Inf, G)
-        pperm = collect(1:(k+1))
-        pperm[iₓ], pperm[end] = pperm[end], pperm[iₓ]
-        sdist = zeros(k+1)
-        sdist[end] = Inf
-        initialized = Ref(false)
-        dcache = zeros(k+1)
-        icache = zeros(Int, k+1)
-        jcache = zeros(Int, k)
-        return new(k, G, iₓ, es, pperm, sdist, initialized, dcache, icache, jcache)
+        pperm = [1:(iₓ-1); (iₓ+1):(k+1)]
+        sdist = [(0.0,pperm[j]) for j in 1:k]
+        return new(k, G, iₓ, es, pperm, sdist)
     end
     function Base.copy(ann::SimplerAnnuli)
-        @extract ann : k G iₓ es pperm sdist initialized dcache icache jcache
-        return new(k, G, iₓ, copy(es), copy(pperm), copy(sdist), initialized, copy(dcache), copy(icache), copy(jcache))
+        @extract ann : k G iₓ es pperm sdist
+        return new(k, G, iₓ, copy(es), copy(pperm), copy(sdist))
     end
 end
 
 function update!(ann::SimplerAnnuli, dist::AbstractVector{Float64})
-    @extract ann : k G iₓ es pperm sdist initialized dcache icache jcache
+    @extract ann : k G iₓ es pperm sdist
 
     @assert length(dist) == k + 1
     @assert dist[iₓ] == 0.0
-    if !initialized[]
-        copy!(sdist, dist)
-        sdist[iₓ], sdist[end] = sdist[end], sdist[iₓ]
-        initialized[] = true
-    else
-        # pperm .= collect(1:(k+1))
-        # pperm[iₓ], pperm[end] = pperm[end], pperm[iₓ]
-        sdist .= getindex.(Ref(dist), pperm)
+    @inbounds for j = 1:k
+        j′ = pperm[j]
+        sdist[j] = (dist[j′],j′)
     end
-    sdist[end] = Inf
 
     es[G] = Inf
     @inbounds for f = G-1:-1:1
         i = 2^(f+1)-2
         sz = min(i + 2^(f+1), k)
-        x = @views partialsortperm!(icache[1:sz], sdist[1:sz], i)
-        es[f] = sdist[x]
-        jcache[1:sz] .= getindex.(Ref(pperm), @view icache[1:sz]) # trick to avoid allocations
-        pperm[1:sz] .= @view jcache[1:sz]
-        dcache[1:sz] .= getindex.(Ref(sdist), @view icache[1:sz])
-        sdist[1:sz] .= @view dcache[1:sz]
+        es[f], x = partialsort!(@view(sdist[1:sz]), i)
     end
+    @inbounds for j = 1:k
+        pperm[j] = sdist[j][2]
+    end
+
     ## sorting the indices might benefit cache access, but it takes too much time...
     # i₀ = 0
     # for f = 1:G
@@ -306,8 +287,7 @@ function _check(ann::SimplerAnnuli, dist::AbstractVector{Float64})
     @assert dist[iₓ] == 0.0
     @assert sum(2^f for f = 1:G) ≥ k
     @assert issorted(es)
-    @assert isperm(pperm)
-    @assert pperm[end] == iₓ
+    @assert isperm([pperm; iₓ])
     i₀ = 0
     e₀ = -Inf
     for f = 1:G
@@ -321,7 +301,7 @@ end
 
 function get_inds(ann::SimplerAnnuli, x::Float64)
     @extract ann : k G es pperm
-    f = min(searchsortedfirst(es, x), G)
+    f = searchsortedfirst(es, x) # es[G] == Inf ⟹ f ≤ G
     i₁ = min(2^(f+1)-2, k)
     return @view pperm[1:i₁]
 end

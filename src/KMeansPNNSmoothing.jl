@@ -1298,8 +1298,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                     s[j] = cd
                 end
             end
-            update!(ann[j], cdj, stj ? stable : nothing) # only for SortedAnnuli
-            # update!(ann[j], cdj)
+            # update!(ann[j], cdj, stj ? stable : nothing) # only for SortedAnnuli
+            update!(ann[j], cdj)
         end
         return config
     end
