@@ -3,11 +3,11 @@ module KMMatrices
 using LinearAlgebra
 using ExtractMacro
 
-export KMMatrix, Mat64, update_quads!
+export KMMatrix, Mat64, update_quads!,
+       _cost, _costs_1_vs_all!, _cost_1_vs_1,
+       findmin_and_2ndmin
 
 import Base: size, copy, copy!, convert, view, maybeview
-
-const minibatchsize = 128
 
 const ColView{T} = SubArray{T, 1, Matrix{T}, Tuple{Base.Slice{Base.OneTo{Int64}}, Int64}, true}
 
@@ -70,5 +70,45 @@ Base.@propagate_inbounds view(kmat::KMMatrix, ::Colon, i::Int) = kmat.dviews[i]
 Base.@propagate_inbounds maybeview(kmat::KMMatrix, args...) = view(kmat, args...)
 
 const Mat64 = KMMatrix{Float64}
+
+Base.@propagate_inbounds function _cost(d1, d2)
+    v1 = 0.0
+    @simd for l = 1:length(d1)
+        v1 += abs2(d1[l] - d2[l])
+    end
+    return v1
+end
+
+Θ(x) = ifelse(x > 0, x, 0.0)
+
+Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}) where {T}
+    @extract m1: d1=dviews[i] q1=dquads[i]
+    @extract m2: d2=dmat q2=dquads
+    mul!(ret, d2', d1)
+    ret .= q1 .+ q2 .- 2 .* ret
+    ## due to floating point approx, we may end up with tiny negative values
+    map!(Θ, ret, ret)
+end
+
+Base.@propagate_inbounds function _cost_1_vs_1(m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, j::Int) where {T}
+    @extract m1: d1=dviews[i] q1=dquads[i]
+    @extract m2: d2=dviews[j] q2=dquads[j]
+    n = length(d1)
+    p = GC.@preserve d1 d2 BLAS.dot(n, pointer(d1, 1), 1, pointer(d2, 1), 1)
+    return Θ(q1 + q2 - 2p)
+end
+
+function findmin_and_2ndmin(a::AbstractVector{Float64})
+    v1, v2, x1 = Inf, Inf, 0
+    for (j,v) in enumerate(a)
+        if v < v1
+            v2 = v1
+            v1, x1 = v, j
+        elseif v < v2
+            v2 = v
+        end
+    end
+    return v1, v2, x1
+end
 
 end # module KMMatrices

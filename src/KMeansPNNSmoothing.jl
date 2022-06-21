@@ -72,33 +72,6 @@ end
 
 include("accelerators.jl")
 
-Base.@propagate_inbounds function _cost(d1, d2)
-    v1 = 0.0
-    @simd for l = 1:length(d1)
-        v1 += abs2(d1[l] - d2[l])
-    end
-    return v1
-end
-
-# Base.@propagate_inbounds function _batchcosts!(d1, d2, cache)
-#     i2 = 0
-#     for j = 1:length(cache)
-#         v = 0.0
-#         @simd for l = 1:length(d1)
-#             i2 += 1
-#             v += (d1[l] - d2[i2])^2
-#         end
-#         cache[j] = v
-#     end
-#     return cache
-# end
-
-Base.@propagate_inbounds function _batchcosts!(d1, n1, d2, n2, cache)
-    cache .= n1 .+ n2 .- 2 .* vec(d1' * d2)
-    map!(x->ifelse(x>0, x, 0.0), cache, cache)
-    return cache
-end
-
 function update_csizes!(config::Configuration)
     @extract config: n c csizes
     fill!(csizes, 0)
@@ -166,14 +139,18 @@ function partition_from_centroids_from_scratch!(config::Configuration{Naive}, da
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     num_chgd_th = zeros(Int, Threads.nthreads())
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
             wi = w ≡ nothing ? 1 : w[i]
             v, x = Inf, 0
             for j in 1:k
-                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                # @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                v′ = wi * costsij[j]
                 if v′ < v
                     v, x = v′, j
                 end
@@ -200,13 +177,17 @@ function partition_from_centroids_from_scratch!(config::Configuration{ReducedCom
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            ci = c[i]
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
             wi = w ≡ nothing ? 1 : w[i]
             v, x = Inf, 0
             for j in 1:k
-                @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                # @views v′ = wi * _cost(data[:,i], centroids[:,j])
+                v′ = wi * costsij[j]
                 if v′ < v
                     v, x = v′, j
                 end
@@ -235,16 +216,13 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
-            costs[i], c[i] = v, x
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            costs[i], c[i] = findmin(costsij)
         end
     end
     num_chgd = n
@@ -268,28 +246,13 @@ function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Ha
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
-    # ncentroids = [norm(@view(centroids[:,j]))^2 for j = 1:k]
-    # ndata = [norm(@view(data[:,i]))^2 for i = 1:n]
-    # costsij_th = [zeros(k) for t = 1:Threads.nthreads()]
-    # vcentroids = [@view(centroids[:,j]) for j = 1:k]
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            datai = @view data[:, i]
-            # costsij = costsij_th[Threads.threadid()]
-            # _batchcosts!(datai, ndata[i], centroids, ncentroids, costsij)
-            v1, v2, x1 = Inf, Inf, 0
-            for j in 1:k
-                v′ = _cost(datai, @view centroids[:,j])
-                # v′ = _cost(datai, vcentroids[j])
-                # v′ = costsij[j]
-                if v′ < v1
-                    v2 = v1
-                    v1, x1 = v′, j
-                elseif v′ < v2
-                    v2 = v′
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
             ub[i] = √v1
             lb[i] = √v2
@@ -316,18 +279,13 @@ function partition_from_centroids_from_scratch!(config::Configuration{SHam}, dat
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            v1, v2, x1 = Inf, Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                if v′ < v1
-                    v2 = v1
-                    v1, x1 = v′, j
-                elseif v′ < v2
-                    v2 = v′
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
             lb[i] = √v2
         end
@@ -353,19 +311,16 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            lbi = @view lb[:,i]
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                lbi[j] = √v′
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v, x = findmin(costsij)
             costs[i], c[i] = v, x
-            ub[i] = √v
+            lb[:,i] .= .√(costsij)
+            ub[i] = lb[x,i]
         end
     end
     num_chgd = n
@@ -389,18 +344,14 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
-            lbi = @view lb[:,i]
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                lbi[j] = √v′
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
-            costs[i], c[i] = v, x
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            costs[i], c[i] = findmin(costsij)
+            lb[:,i] .= .√(costsij)
         end
     end
     num_chgd = n
@@ -428,16 +379,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
     t = @elapsed Threads.@threads for i in 1:n
-        costsij = costsij_th[Threads.threadid()]
         @inbounds begin
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                costsij[j] = v′
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v, x = findmin(costsij)
             costs[i], c[i] = v, x
             ub[i] = √v
             for (f,gr) in enumerate(groups)
@@ -483,14 +428,9 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
     t = @elapsed Threads.@threads for i in 1:n
         costsij = costsij_th[Threads.threadid()]
         @inbounds begin
-            v, x = Inf, 0
-            for j in 1:k
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                costsij[j] = v′
-                if v′ < v
-                    v, x = v′, j
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v, x = findmin(costsij)
             costs[i], c[i] = v, x
             for (f,gr) in enumerate(groups)
                 if last(gr) ≥ x
@@ -1279,6 +1219,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             δc[j] = √_cost(centrj, ncentrj)
             centrj[:] = ncentrj
         end
+        update_quads!(centroids)
     end
 
     global function centroids_from_partition!(config::Configuration{Naive}, data::Mat64, w::Union{AbstractVector{<:Real},Nothing})
