@@ -482,9 +482,9 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     @assert all(c .> 0)
 
     active_inds = findall(active)
-    all_inds = collect(1:k)
 
     num_fullsearch_th = zeros(Int, Threads.nthreads())
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
     num_chgd = 0
     fill!(stable, true)
@@ -499,13 +499,25 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
             fullsearch = active[ci] && (v > old_v)
             num_fullsearch_th[Threads.threadid()] += fullsearch
 
-            inds = fullsearch ? all_inds : active_inds
-            x = ci
-            for j in inds
-                j == ci && continue
-                @views v′ = wi * _cost(datai, centroids[:,j])
-                if v′ < v
-                    v, x = v′, j
+            if fullsearch
+                costsij = costsij_th[Threads.threadid()]
+                _costs_1_vs_all!(costsij, data, i, centroids)
+                x = ci
+                for j in 1:k
+                    j == ci && continue
+                    v′ = wi * costsij[j]
+                    if v′ < v
+                        v, x = v′, j
+                    end
+                end
+            else
+                x = ci
+                for j in active_inds
+                    j == ci && continue
+                    @views v′ = wi * _cost(datai, centroids[:,j])
+                    if v′ < v
+                        v, x = v′, j
+                    end
                 end
             end
             if x ≠ ci
@@ -610,6 +622,8 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
@@ -625,17 +639,9 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
             ub[i] = √̂(v)
             lbr > ub[i] && continue
 
-            v1, v2, x1 = v, Inf, ci
-            for j in 1:k
-                j == ci && continue
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                if v′ < v1
-                    v2 = v1
-                    v1, x1 = v′, j
-                elseif v′ < v2
-                    v2 = v′
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
             if x1 ≠ ci
                 @lock lk begin
                     num_chgd += 1
@@ -734,6 +740,8 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     num_chgd = 0
     lk = Threads.SpinLock()
     t = @elapsed Threads.@threads for i in 1:n
@@ -746,17 +754,10 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
             lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
             lbr > √̂(v) && continue
 
-            v1, v2, x1 = v, Inf, ci
-            for j in 1:k
-                j == ci && continue
-                @views v′ = _cost(data[:,i], centroids[:,j])
-                if v′ < v1
-                    v2 = v1
-                    v1, x1 = v′, j
-                elseif v′ < v2
-                    v2 = v′
-                end
-            end
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
+
             if x1 ≠ ci
                 @lock lk begin
                     num_chgd += 1
@@ -803,7 +804,8 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
             end
             skip && continue
 
-            @views v = _cost(data[:,i], centroids[:,ci])
+            datai = @view data[:,i]
+            @views v = _cost(datai, centroids[:,ci])
             x = ci
             sv = √̂(v)
             ubi = sv
@@ -811,7 +813,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
 
             for j in 1:k
                 (lbi[j] > ubi || j == ci) && continue
-                @views v′ = _cost(data[:,i], centroids[:,j])
+                @views v′ = _cost(datai, centroids[:,j])
                 sv′ = √̂(v′)
                 lbi[j] = sv′
                 if v′ < v
@@ -860,9 +862,10 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
     t = @elapsed Threads.@threads for i in 1:n
         @inbounds begin
             ci = c[i]
+            datai = @view data[:,i]
             if active[ci]
                 old_v = costs[i]
-                @views v = _cost(data[:,i], centroids[:,ci])
+                @views v = _cost(datai, centroids[:,ci])
                 fullsearch = (v > old_v)
             else
                 v = costs[i]
@@ -879,7 +882,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
             inds = fullsearch ? all_inds : active_inds
             for j in inds
                 (lbi[j] > ubi || j == ci) && continue
-                @views v′ = _cost(data[:,i], centroids[:,j])
+                @views v′ = _cost(datai, centroids[:,j])
                 sv′ = √̂(v′)
                 lbi[j] = sv′
                 if v′ < v
