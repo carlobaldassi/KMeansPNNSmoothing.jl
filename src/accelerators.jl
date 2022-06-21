@@ -39,7 +39,8 @@ struct KBall <: Accelerator
     stable::Vector{Bool} # there's too much hopping around for BitVector
     nstable::Vector{Bool}
     function KBall(config::Configuration{KBall})
-        @extract config : centroids
+        # @extract config : centroids
+        centroids = config.centroids.dmat # XXX
         m, k = size(centroids)
         δc = zeros(k)
         r = fill(Inf, k)
@@ -57,7 +58,8 @@ end
 
 function reset!(accel::KBall)
     @extract accel : config δc r cdist neighb stable nstable
-    @extract config : k centroids
+    @extract config : k
+    centroids = config.centroids.dmat # XXX
     fill!(δc, 0.0)
     fill!(r, Inf)
     @inbounds for j = 1:k, i = 1:k
@@ -77,7 +79,8 @@ struct Hamerly <: Accelerator
     s::Vector{Float64}
     stable::BitVector
     function Hamerly(config::Configuration{Hamerly})
-        @extract config : n k centroids
+        @extract config : n k
+        centroids = config.centroids.dmat # XXX
         δc = zeros(k)
         lb = zeros(n)
         ub = fill(Inf, n)
@@ -93,7 +96,8 @@ end
 
 function reset!(accel::Hamerly)
     @extract accel : config δc lb ub s stable
-    @extract config : k centroids
+    @extract config : k
+    centroids = config.centroids.dmat
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(ub, Inf)
@@ -118,7 +122,7 @@ struct Exponion <: Accelerator
     ann::Vector{SimplerAnnuli}
     stable::BitVector
     function Exponion(config::Configuration{Exponion})
-        @extract config : n k centroids
+        @extract config : n k
         G = ceil(Int, log2(k))
         δc = zeros(k)
         lb = zeros(n)
@@ -143,7 +147,8 @@ end
 
 function reset!(accel::Exponion)
     @extract accel : config δc lb ub cdist s ann stable
-    @extract config : k centroids
+    @extract config : k
+    centroids = config.centroids.dmat # XXX
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     fill!(ub, Inf)
@@ -168,10 +173,11 @@ struct SHam <: Accelerator
     s::Vector{Float64}
     stable::BitVector
     function SHam(config::Configuration)
-        @extract config : n k centroids
+        @extract config : n k
         δc = zeros(k)
         lb = zeros(n)
-        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
+        # s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
+        s = zeros(k)
         stable = falses(k)
         return new(config, δc, lb, s, stable)
     end
@@ -183,7 +189,8 @@ end
 
 function reset!(accel::SHam)
     @extract accel : config δc lb s stable
-    @extract config : k cnentroids
+    @extract config : k
+    centroids = config.centroids.dmat # XXX
     fill!(δc, 0.0)
     fill!(lb, 0.0)
     @inbounds for j = 1:k
@@ -200,7 +207,7 @@ struct SElk <: Accelerator
     ub::Vector{Float64}
     stable::BitVector
     function SElk(config::Configuration)
-        @extract config : n k centroids
+        @extract config : n k
         δc = zeros(k)
         lb = zeros(k, n)
         ub = fill(Inf, n)
@@ -262,6 +269,32 @@ function gen_groups(k, G)
     return groups
 end
 
+function cluster_centroids!(centroids::Mat64, G::Int)
+    G == 1 && return [1:size(centroids,2)]
+    ## we save/restore the RNG to make results comparable across accelerators
+    ## (especially relevant with KMPNNS seeders)
+    rng_bk = copy(Random.GLOBAL_RNG)
+    result = kmeans(centroids.dmat, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
+    copy!(Random.GLOBAL_RNG, rng_bk)
+    groups = UnitRange{Int}[]
+    new_dmat = similar(centroids.dmat)
+    new_dquads = similar(centroids.dquads)
+    ind = 0
+    for f = 1:G
+        gr_inds = findall(result.labels .== f)
+        gr_size = length(gr_inds)
+        r = ind .+ (1:gr_size)
+        new_dmat[:,r] = centroids.dmat[:,gr_inds]
+        new_dquads[r] = centroids.dquads[gr_inds]
+        push!(groups, r)
+        ind += gr_size
+    end
+    new_centroids = KMMatrix(new_dmat, new_dquads)
+    # @assert vcat(groups...) == 1:k
+    copy!(centroids, new_centroids)
+    return groups
+end
+
 struct Yinyang <: Accelerator
     config::Configuration{Yinyang}
     G::Int
@@ -287,26 +320,8 @@ struct Yinyang <: Accelerator
         stable = falses(k)
 
         ## cluster the centroids
-        if G > 1
-            ## we save/restore the RNG to make results comparable across accelerators
-            ## (especially relevant with KMPNNS seeders)
-            rng_bk = copy(Random.GLOBAL_RNG)
-            result = kmeans(centroids, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
-            copy!(Random.GLOBAL_RNG, rng_bk)
-            groups = UnitRange{Int}[]
-            new_centroids = similar(centroids)
-            ind = 0
-            for f = 1:G
-                gr_inds = findall(result.labels .== f)
-                gr_size = length(gr_inds)
-                r = ind .+ (1:gr_size)
-                new_centroids[:,r] = centroids[:,gr_inds]
-                push!(groups, r)
-                ind += gr_size
-            end
-            # @assert vcat(groups...) == 1:k
-            copy!(centroids, new_centroids)
-        end
+        # groups = gen_groups(k, G)
+        groups = cluster_centroids!(centroids, G)
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable)
     end
     function Base.copy(accel::Yinyang)
@@ -367,29 +382,8 @@ struct Ryy <: Accelerator
         gactive = trues(G)
 
         ## cluster the centroids
-        groups = gen_groups(k, G)
-        if G > 1
-            ## we save/restore the RNG to make results comparable across accelerators
-            ## (especially relevant with KMPNNS seeders)
-            rng_bk = copy(Random.GLOBAL_RNG)
-            result = kmeans(centroids, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
-            copy!(Random.GLOBAL_RNG, rng_bk)
-            groups = UnitRange{Int}[]
-            new_centroids = similar(centroids)
-            ind = 0
-            for f = 1:G
-                gr_inds = findall(result.labels .== f)
-                gr_size = length(gr_inds)
-                r = ind .+ (1:gr_size)
-                new_centroids[:,r] = centroids[:,gr_inds]
-                push!(groups, r)
-                ind += gr_size
-            end
-            # @assert vcat(groups...) == 1:k
-            copy!(centroids, new_centroids)
-        else
-            groups = [1:k]
-        end
+        # groups = gen_groups(k, G)
+        groups = cluster_centroids!(centroids, G)
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable, active, gactive)
     end
     function Base.copy(accel::Ryy)
