@@ -79,15 +79,11 @@ Base.@propagate_inbounds function _cost(d1, d2)
     return v1
 end
 
-Θ(x) = ifelse(x > 0, x, 0.0)
-
 Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}) where {T}
     @extract m1: d1=dviews[i] q1=dquads[i]
     @extract m2: d2=dmat q2=dquads
     mul!(ret, d2', d1)
     ret .= q1 .+ q2 .- 2 .* ret
-    ## due to floating point approx, we may end up with tiny negative values
-    map!(Θ, ret, ret)
 end
 
 Base.@propagate_inbounds function _cost_1_vs_1(m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, j::Int) where {T}

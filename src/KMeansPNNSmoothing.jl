@@ -21,6 +21,11 @@ export kmeans,
 include("KMMatrices.jl")
 using .KMMatrices
 
+## due to floating point approx, we may end up with tiny negative cost values
+## we use this rectified square root for that
+Θ(x) = ifelse(x > 0, x, 0.0)
+√̂(x) = √Θ(x)
+
 abstract type Accelerator end
 
 mutable struct Configuration{A<:Accelerator}
@@ -87,7 +92,7 @@ function complete_initialization!(config::Configuration{<:Union{Hamerly,SElk,Exp
     @extract accel: ub
 
     @inbounds @simd for i = 1:n
-        ub[i] = √costs[i]
+        ub[i] = √̂(costs[i])
     end
 
     return config
@@ -98,7 +103,7 @@ function complete_initialization!(config::Configuration{Yinyang}, data::Mat64)
     @extract accel: ub groups gind
 
     @inbounds @simd for i = 1:n
-        ub[i] = √costs[i]
+        ub[i] = √̂(costs[i])
     end
     @inbounds for i = 1:n
         ci = c[i]
@@ -254,8 +259,8 @@ function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Ha
             _costs_1_vs_all!(costsij, data, i, centroids)
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
-            ub[i] = √v1
-            lb[i] = √v2
+            ub[i] = √̂(v1)
+            lb[i] = √̂(v2)
         end
     end
     num_chgd = n
@@ -287,7 +292,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SHam}, dat
             _costs_1_vs_all!(costsij, data, i, centroids)
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
-            lb[i] = √v2
+            lb[i] = √̂(v2)
         end
     end
     num_chgd = n
@@ -319,7 +324,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
             _costs_1_vs_all!(costsij, data, i, centroids)
             v, x = findmin(costsij)
             costs[i], c[i] = v, x
-            lb[:,i] .= .√(costsij)
+            lb[:,i] .= .√̂(costsij)
             ub[i] = lb[x,i]
         end
     end
@@ -351,7 +356,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
             costs[i], c[i] = findmin(costsij)
-            lb[:,i] .= .√(costsij)
+            lb[:,i] .= .√̂(costsij)
         end
     end
     num_chgd = n
@@ -384,7 +389,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
             _costs_1_vs_all!(costsij, data, i, centroids)
             v, x = findmin(costsij)
             costs[i], c[i] = v, x
-            ub[i] = √v
+            ub[i] = √̂(v)
             for (f,gr) in enumerate(groups)
                 if last(gr) ≥ x
                     gind[i] = f
@@ -398,7 +403,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
                     j == x && continue
                     v′ = min(v′, costsij[j])
                 end
-                lbi[f] = √v′
+                lbi[f] = √̂(v′)
             end
         end
     end
@@ -445,7 +450,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
                     j == x && continue
                     v′ = min(v′, costsij[j])
                 end
-                lbi[f] = √v′
+                lbi[f] = √̂(v′)
             end
         end
     end
@@ -550,8 +555,8 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w:
             length(nci) == 0 && continue
             # @views v = _cost(data[:,i], centroids[:,ci])
             v = costs[i] # was set when computing r
-            d = √v
-            @assert d ≤ r[ci]
+            d = √̂(v)
+            # @assert d ≤ r[ci]
             if !did_sort[ci]
                 @lock lk2 begin
                     if !did_sort[ci] # maybe some thread did it while we were waiting...
@@ -617,7 +622,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
             lbr > ubi && continue
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √v
+            ub[i] = √̂(v)
             lbr > ub[i] && continue
 
             v1, v2, x1 = v, Inf, ci
@@ -641,7 +646,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
                 end
             end
             costs[i], c[i] = v1, x1
-            ub[i], lb[i] = √v1, √v2
+            ub[i], lb[i] = √̂(v1), √̂(v2)
         end
     end
     cost = sum(costs)
@@ -675,7 +680,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
             datai = @view data[:,i]
             v = _cost(datai, @view centroids[:,ci])
             costs[i] = v
-            ub[i] = √v
+            ub[i] = √̂(v)
             lbr > ub[i] && continue
 
             ri = 2 * (ubi + hs)
@@ -708,7 +713,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
                 end
             end
             costs[i], c[i], = v1, x1
-            ub[i], lb[i] = √v1, √v2
+            ub[i], lb[i] = √̂(v1), √̂(v2)
         end
     end
     cost = sum(costs)
@@ -739,7 +744,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
             lbi = lb[i]
             hs = s[ci] / 2
             lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
-            lbr > √v && continue
+            lbr > √̂(v) && continue
 
             v1, v2, x1 = v, Inf, ci
             for j in 1:k
@@ -762,7 +767,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
                 end
             end
             costs[i], c[i] = v1, x1
-            lb[i] = √v2
+            lb[i] = √̂(v2)
         end
     end
     cost = sum(costs)
@@ -800,14 +805,14 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
 
             @views v = _cost(data[:,i], centroids[:,ci])
             x = ci
-            sv = √v
+            sv = √̂(v)
             ubi = sv
             lbi[ci] = sv
 
             for j in 1:k
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(data[:,i], centroids[:,j])
-                sv′ = √v′
+                sv′ = √̂(v′)
                 lbi[j] = sv′
                 if v′ < v
                     v, x = v′, j
@@ -864,7 +869,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
                 fullsearch = false
             end
             lbi = @view lb[:,i]
-            ubi = √v
+            ubi = √̂(v)
             if active[ci]
                 lbi[ci] = ubi
             end
@@ -875,10 +880,11 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
             for j in inds
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(data[:,i], centroids[:,j])
-                lbi[j] = √v′
+                sv′ = √̂(v′)
+                lbi[j] = sv′
                 if v′ < v
                     v, x = v′, j
-                    ubi = √v′
+                    ubi = sv′
                 end
             end
             if x ≠ ci
@@ -938,7 +944,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
                 if !tight
                     # @assert v == Inf
                     @views v = _cost(data[:,i], centroids[:,ci])
-                    sv = √v
+                    sv = √̂(v)
                     ubi = sv
                     tight = true
                     x = ci
@@ -958,17 +964,17 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
                 end
                 if v1 < v
                     @assert x1 ≠ x
-                    lbi[f] = √v2
+                    lbi[f] = √̂(v2)
                     if f ≠ fi
                         lbi[fi] = min(lbi[fi], ubi)
                         fi = f
                     else
-                        lbi[f] = min(lbi[f], √v)
+                        lbi[f] = min(lbi[f], √̂(v))
                     end
                     v, x = v1, x1
-                    ubi = √v
+                    ubi = √̂(v)
                 else
-                    lbi[f] = √v1
+                    lbi[f] = √̂(v1)
                 end
             end
             if x ≠ ci
@@ -1024,7 +1030,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                 v = costs[i]
                 fullsearch = false
             end
-            sv = √v
+            sv = √̂(v)
             lbi = @view lb[:,i]
             skip = true
             for lbif in lbi
@@ -1050,7 +1056,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                 end
                 if v1 < v
                     @assert x1 ≠ x
-                    lbi[f] = √v2
+                    lbi[f] = √̂(v2)
                     if f ≠ fi
                         lbi[fi] = min(lbi[fi], sv)
                         fi = f
@@ -1058,9 +1064,9 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                         lbi[f] = min(lbi[f], sv)
                     end
                     v, x = v1, x1
-                    sv = √v
+                    sv = √̂(v)
                 else
-                    lbi[f] = √v1
+                    lbi[f] = √̂(v1)
                 end
             end
             if x ≠ ci
@@ -1101,7 +1107,7 @@ function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang,Exponion}}, d
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √v
+            ub[i] = √̂(v)
         end
     end
     config.cost = sum(costs)
@@ -1123,8 +1129,8 @@ function sync_costs!(config::Configuration{SElk}, data::Mat64, w::Union{Vector{<
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √v
-            lb[ci,i] = √v
+            ub[i] = √̂(v)
+            lb[ci,i] = √̂(v)
         end
     end
     config.cost = sum(costs)
@@ -1216,7 +1222,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             centrj = @view centroids[:,j]
             ncentrj = @view new_centroids[:,j]
             ncentrj ./= z
-            δc[j] = √_cost(centrj, ncentrj)
+            δc[j] = √̂(_cost(centrj, ncentrj))
             centrj[:] = ncentrj
         end
         update_quads!(centroids)
@@ -1297,16 +1303,16 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @inbounds Threads.@threads for i = 1:n
             j = c[i]
             stable[j] && continue
-            # r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
+            # r[j] = max(r[j], @views √̂(_cost(centroids[:,j], data[:,i])))
             v = @views _cost(centroids[:,j], data[:,i])
             costs[i] = v
-            sv = √v
+            sv = √̂(v)
             if sv > r[j]
                 @lock lk begin
                     r[j] = sv
                 end
             end
-            # r[j] = max(r[j], @views √_cost(centroids[:,j], data[:,i]))
+            # r[j] = max(r[j], @views √̂(_cost(centroids[:,j], data[:,i])))
         end
 
         @inbounds for j = 1:k, j′ = 1:k
@@ -1316,7 +1322,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             if cd ≥ 2rj + δ + δ′
                 cdist[j′, j] = cd - δ - δ′
             else
-                @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
                 cdist[j′, j] = cd
             end
         end
@@ -1379,7 +1385,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             s[j] = Inf
             for j′ = 1:k
                 j′ == j && continue
-                @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
                 if cd < s[j]
                     s[j] = cd
                 end
@@ -1432,7 +1438,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 #     cd = cdist[j, j′]
                 #     cdist[j′,j] = cd
                 else
-                    @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                    @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
                     cdj[j′] = cd
                 end
                 if cd < s[j]
@@ -1479,7 +1485,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             s[j] = Inf
             for j′ = 1:k
                 j′ == j && continue
-                @views cd = √_cost(centroids[:,j′], centroids[:,j])
+                @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
                 if cd < s[j]
                     s[j] = cd
                 end
