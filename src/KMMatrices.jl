@@ -4,7 +4,7 @@ using LinearAlgebra
 using ExtractMacro
 
 export KMMatrix, Mat64, update_quads!,
-       _cost, _costs_1_vs_all!, _cost_1_vs_1,
+       _cost, _costs_1_vs_all!, _costs_1_vs_range!, _cost_1_vs_1,
        findmin_and_2ndmin
 
 import Base: size, copy, copy!, convert, view, maybeview
@@ -83,8 +83,23 @@ Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::K
     @extract m1: d1=dviews[i] q1=dquads[i]
     @extract m2: d2=dmat q2=dquads
     mul!(ret, d2', d1)
-    ret .= q1 .+ q2 .- 2 .* ret
+    # ret .= q1 .+ q2 .- 2 .* ret
+    @simd for j = 1:length(ret)
+        ret[j] = q1 + q2[j] - 2 * ret[j]
+    end
 end
+
+Base.@propagate_inbounds function _costs_1_vs_range!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, r::UnitRange) where {T}
+    @extract m1: d1=dviews[i] q1=dquads[i]
+    @extract m2: d2=view(dmat,esc(:),esc(r)) q2=view(dquads,esc(r))
+    rret = @view(ret[r])
+    mul!(rret, d2', d1)
+    # rret .= q1 .+ q2 .- 2 .* rret
+    @simd for j = 1:length(rret)
+        rret[j] = q1 + q2[j] - 2 * rret[j]
+    end
+end
+
 
 Base.@propagate_inbounds function _cost_1_vs_1(m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, j::Int) where {T}
     @extract m1: d1=dviews[i] q1=dquads[i]

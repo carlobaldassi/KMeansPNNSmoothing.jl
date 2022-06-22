@@ -921,6 +921,8 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     # @assert all(1 .≤ gind .≤ G)
     num_chgd = 0
     fill!(stable, true)
@@ -940,24 +942,19 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
             ci = c[i]
             fi = gind[i]
 
-            tight = false
-            v, x = Inf, 0
+            @views v = _cost(data[:,i], centroids[:,ci])
+            sv = √̂(v)
+            ubi = sv
+            x = ci
             for (f,gr) in enumerate(groups)
                 lbi[f] > ubi && continue
-                if !tight
-                    # @assert v == Inf
-                    @views v = _cost(data[:,i], centroids[:,ci])
-                    sv = √̂(v)
-                    ubi = sv
-                    tight = true
-                    x = ci
-                    lbi[f] > ubi && continue
-                end
-                # @assert tight
+                costsij = costsij_th[Threads.threadid()]
+                _costs_1_vs_range!(costsij, data, i, centroids, gr)
                 v1, v2, x1 = Inf, Inf, 0
                 for j in gr
                     j == x && continue
-                    @views v′ = _cost(data[:,i], centroids[:,j])
+                    # @views v′ = _cost(data[:,i], centroids[:,j])
+                    v′ = costsij[j]
                     if v′ < v1
                         v2 = v1
                         v1, x1 = v′, j
@@ -1013,6 +1010,8 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
     DataLogging.@push_prefix! "P_FROM_C"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
     # @assert all(1 .≤ gind .≤ G)
     num_chgd = 0
     fill!(stable, true)
@@ -1046,10 +1045,13 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
             for (f,gr) in enumerate(groups)
                 lbi[f] > sv && continue
                 !fullsearch && !gactive[f] && continue
+                costsij = costsij_th[Threads.threadid()]
+                _costs_1_vs_range!(costsij, data, i, centroids, gr)
                 v1, v2, x1 = Inf, Inf, 0
                 for j in gr
                     j == x && continue
-                    @views v′ = _cost(datai, centroids[:,j])
+                    # @views v′ = _cost(datai, centroids[:,j])
+                    v′ = costsij[j]
                     if v′ < v1
                         v2 = v1
                         v1, x1 = v′, j
