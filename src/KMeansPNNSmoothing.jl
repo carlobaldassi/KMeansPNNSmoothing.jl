@@ -1308,10 +1308,10 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @inbounds Threads.@threads for i = 1:n
             j = c[i]
             stable[j] && continue
-            # r[j] = max(r[j], @views √̂(_cost(centroids[:,j], data[:,i])))
+            # r[j] = max(r[j], @views 2 * √̂(_cost(centroids[:,j], data[:,i])))
             v = @views _cost(centroids[:,j], data[:,i])
             costs[i] = v
-            sv = √̂(v)
+            sv = 2 * √̂(v)
             if sv > r[j]
                 @lock lk begin
                     r[j] = sv
@@ -1323,7 +1323,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             cd = cdist[j′, j]
             δ, δ′ = δc[j], δc[j′]
             rj = r[j]
-            if cd ≥ 2rj + δ + δ′
+            if cd ≥ rj + δ + δ′
                 cdist[j′, j] = cd - δ - δ′
             else
                 @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
@@ -1342,7 +1342,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             allstable = stable[j]
             for j′ = 1:k
                 j′ == j && continue
-                if cdist[j′, j] < 2r[j]
+                if cdist[j′, j] < r[j]
                     ind += 1
                     nj[ind] = j′
                     stable[j′] || (allstable = false)
@@ -1381,7 +1381,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         @inbounds for i = 1:n
             ci = c[i]
-            lb[i] -= (ci == jₘ ? δcₛ : δcₘ)
+            lb[i] -= ifelse(ci == jₘ, δcₛ, δcₘ)
             ub[i] += δc[c[i]]
         end
 
@@ -1424,10 +1424,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
         @inbounds for i = 1:n
-            ub[i] += δc[c[i]]
-        end
-        @inbounds for i = 1:n
-            lb[i] -= ifelse(c[i] == jₘ, δcₛ, δcₘ)
+            ci = c[i]
+            ub[i] += δc[ci]
+            lb[i] -= ifelse(ci == jₘ, δcₛ, δcₘ)
         end
 
         @inbounds for j = 1:k
@@ -1483,7 +1482,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         end
         @inbounds for i = 1:n
             ci = c[i]
-            lb[i] -= (ci == jₘ ? δcₛ : δcₘ)
+            lb[i] -= ifelse(ci == jₘ, δcₛ, δcₘ)
         end
 
         @inbounds for j = 1:k
@@ -1752,7 +1751,7 @@ KMPlusPlus() = KMPlusPlus{nothing}()
 
 A `KMeansSeeder` that uses Assumption-Free K-MC². The parameter `M` determines the
 number of Monte Carlo steps. This algorithm is implemented in a way that is O(kND)
-instead of O(k²m) because we still need to compute the partition by the end. So it
+instead of O(k²M) because we still need to compute the partition by the end. So it
 is provided only for testing; for practical purposes `KMPlusPlus` should be preferred.
 """
 struct KMAFKMC2{M} <: KMeansSeeder
@@ -2214,7 +2213,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
     end
 
     t_fuse = @elapsed @inbounds while k > tgt_k
-        jm = findmin(@view(nns_costs[1:k]))[2]
+        jm = argmin(@view(nns_costs[1:k]))
         js = nns[jm]
         @assert nns_costs[js] == nns_costs[jm]
         @assert jm < js
