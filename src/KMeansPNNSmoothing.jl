@@ -2301,6 +2301,31 @@ end
 
 inner_init(S::KMMetaSeeder{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}) where S0 = init_centroids(S.init0, data, k, A)
 
+function gen_fair_splits(n, J)
+    b = n÷J
+    r = n - b*J
+    split = zeros(Int, n)
+    for j in 1:J
+        rng = (1:(b+(j≤r))) .+ ((b+1)*(j-1) - max(j-r-1,0))
+        split[rng] .= j
+    end
+    shuffle!(split)
+    return split
+end
+
+function gen_random_splits(n, J, k)
+    split = rand(1:J, n)
+    while any(sum(split .== a) < k for a = 1:J)
+        split = rand(1:J, n)
+    end
+    shuffle!(split)
+    return split
+end
+
+function gen_random_splits_quickndirty(n, J, k)
+    return shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
+end
+
 function init_centroids(S::KMPNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
     @extract S : ρ
     DataLogging.@push_prefix! "INIT_METANN"
@@ -2312,8 +2337,9 @@ function init_centroids(S::KMPNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerato
 
     t = @elapsed mconfig = begin
         tpp = @elapsed configs = begin
-            split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
-            @assert all(sum(split .== a) ≥ k for a = 1:J)
+            # split = gen_random_splits(n, J, k)
+            split = gen_fair_splits(n, J)
+            # @assert all(sum(split .== a) ≥ k for a = 1:J)
             configs = Vector{Configuration{A}}(undef, J)
             Threads.@threads for a = 1:J
                 rdata = KMMatrix(data.dmat[:,split .== a])
@@ -2376,8 +2402,9 @@ function init_centroids(S::KMRefine{S0}, data::Mat64, k::Int, A::Type{<:Accelera
     DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
     t = @elapsed mconfig = begin
         tinit = @elapsed configs = begin
-            split = shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
-            @assert all(sum(split .== a) ≥ k for a = 1:J)
+            # split = gen_random_splits(n, J, k)
+            split = gen_fair_splits(n, J)
+            # @assert all(sum(split .== a) ≥ k for a = 1:J)
             configs = Vector{Configuration{A}}(undef, J)
             Threads.@threads for a = 1:J
                 rdata = KMMatrix(data.dmat[:,split .== a])
