@@ -87,4 +87,12 @@ macro log(args...)
     end
 end
 
+macro exec(args...)
+    if logging_on
+        return Expr(:block, map(esc, args)...)
+    else
+        return Expr(:block)
+    end
+end
+
 end # module

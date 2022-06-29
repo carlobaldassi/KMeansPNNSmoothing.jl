@@ -140,7 +140,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Naive}, da
     @extract config: m k n c costs centroids
     @assert size(data) == (m, n)
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[NAIVE]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     num_chgd_th = zeros(Int, Threads.nthreads())
@@ -168,8 +168,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{Naive}, da
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -179,7 +181,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{ReducedCom
     @extract accel: stable
     @assert size(data) == (m, n)
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[REDCOMP]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -205,8 +207,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{ReducedCom
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -218,7 +222,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
 
     w ≡ nothing || error("w unsupported with KBall accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[KBALL]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -235,8 +239,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -248,7 +254,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Ha
 
     w ≡ nothing || error("w unsupported with Hamerly or Exponion accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[$(typeof(config) == Configuration{Hamerly} ? "HAM" : "EXP")]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -268,8 +274,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{<:Union{Ha
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -281,7 +289,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SHam}, dat
 
     w ≡ nothing || error("w unsupported with SHam accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[SHAM]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -300,8 +308,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{SHam}, dat
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -313,7 +323,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
 
     w ≡ nothing || error("w unsupported with SElk accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[SELK]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -333,8 +343,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -346,7 +358,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
 
     w ≡ nothing || error("w unsupported with RElk accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[RELK]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -365,8 +377,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -378,7 +392,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
 
     w ≡ nothing || error("w unsupported with Yinyang accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[YIN]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -412,8 +426,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -425,7 +441,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
 
     w ≡ nothing || error("w unsupported with Ryy accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C_SCRATCH"
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[RYY]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
@@ -461,8 +477,10 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
     cost = sum(costs)
     update_csizes!(config)
 
+    DataLogging.@exec dist_comp = n * k
+
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -476,8 +494,9 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     @extract accel: active stable
     @assert size(data) == (m, n)
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[REDCOMP]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+    DataLogging.@exec dist_comp = 0
 
     @assert all(c .> 0)
 
@@ -496,12 +515,14 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
             datai = @view data[:,i]
             old_v = costs[i]
             @views v = wi * _cost(datai, centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             fullsearch = active[ci] && (v > old_v)
             num_fullsearch_th[Threads.threadid()] += fullsearch
 
             if fullsearch
                 costsij = costsij_th[Threads.threadid()]
                 _costs_1_vs_all!(costsij, data, i, centroids)
+                DataLogging.@exec dist_comp += k
                 x = ci
                 for j in 1:k
                     j == ci && continue
@@ -519,6 +540,7 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
                         v, x = v′, j
                     end
                 end
+                DataLogging.@exec dist_comp += length(active_inds) - active[ci]
             end
             if x ≠ ci
                 @lock lk begin
@@ -536,7 +558,7 @@ function partition_from_centroids!(config::Configuration{ReducedComparison}, dat
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp fullsearches: $num_fullsearch / $n"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -548,10 +570,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w:
 
     w ≡ nothing || error("w unsupported with KBall accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[KBALL]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     # @assert all(c .> 0)
+
+    DataLogging.@exec dist_comp = 0
 
     new_stable = fill!(similar(stable), true)
     sorted_neighb = copy.(neighb)
@@ -588,6 +612,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w:
                 if v′ < v
                     v, x = v′, j
                 end
+                DataLogging.@exec dist_comp += 1
                 h == nn && break
                 d ≤ cdist[nci[h+1], ci] / 2 && break
             end
@@ -607,7 +632,7 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w:
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -619,10 +644,12 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
 
     w ≡ nothing || error("w unsupported with Hamerly accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[HAM]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    DataLogging.@exec dist_comp = 0
 
     num_chgd = 0
     fill!(stable, true)
@@ -635,12 +662,14 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
             lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
             lbr > ubi && continue
             @views v = _cost(data[:,i], centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             costs[i] = v
             ub[i] = √̂(v)
             lbr > ub[i] && continue
 
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
+            DataLogging.@exec dist_comp += k
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             if x1 ≠ ci
                 @lock lk begin
@@ -658,7 +687,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -670,8 +699,10 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
 
     w ≡ nothing || error("w unsupported with Exponion accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[EXP]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    DataLogging.@exec dist_comp = 0
 
     num_chgd = 0
     fill!(stable, true)
@@ -685,6 +716,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
             lbr > ubi && continue
             datai = @view data[:,i]
             v = _cost(datai, @view centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             costs[i] = v
             ub[i] = √̂(v)
             lbr > ub[i] && continue
@@ -709,6 +741,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
                     v2 = v′
                 end
             end
+            DataLogging.@exec dist_comp += length(js)
             if x1 ≠ ci
                 @lock lk begin
                     num_chgd += 1
@@ -725,7 +758,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -737,10 +770,12 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
 
     w ≡ nothing || error("w unsupported with SHam accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[SHAM]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    DataLogging.@exec dist_comp = 0
 
     num_chgd = 0
     lk = Threads.SpinLock()
@@ -748,6 +783,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
         @inbounds begin
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             costs[i] = v
             lbi = lb[i]
             hs = s[ci] / 2
@@ -756,6 +792,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
 
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
+            DataLogging.@exec dist_comp += k
             v1, v2, x1 = findmin_and_2ndmin(costsij)
 
             if x1 ≠ ci
@@ -774,7 +811,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -786,8 +823,10 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
 
     w ≡ nothing || error("w unsupported with SElk accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[SELK]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    DataLogging.@exec dist_comp = 0
 
     num_chgd = 0
     fill!(stable, true)
@@ -806,6 +845,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
 
             datai = @view data[:,i]
             @views v = _cost(datai, centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             x = ci
             sv = √̂(v)
             ubi = sv
@@ -814,6 +854,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
             for j in 1:k
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(datai, centroids[:,j])
+                DataLogging.@exec dist_comp += 1
                 sv′ = √̂(v′)
                 lbi[j] = sv′
                 if v′ < v
@@ -836,7 +877,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -848,8 +889,10 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
 
     w ≡ nothing || error("w unsupported with RElk accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[RELK]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    DataLogging.@exec dist_comp = 0
 
     num_fullsearch_th = zeros(Int, Threads.nthreads())
 
@@ -866,6 +909,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
             if active[ci]
                 old_v = costs[i]
                 @views v = _cost(datai, centroids[:,ci])
+                DataLogging.@exec dist_comp += 1
                 fullsearch = (v > old_v)
             else
                 v = costs[i]
@@ -883,6 +927,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
             for j in inds
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(datai, centroids[:,j])
+                DataLogging.@exec dist_comp += 1
                 sv′ = √̂(v′)
                 lbi[j] = sv′
                 if v′ < v
@@ -906,7 +951,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost fullsearches: $num_fullsearch / $n"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp fullsearches: $num_fullsearch / $n"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -918,10 +963,12 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
 
     w ≡ nothing || error("w unsupported with Yinyang accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[YIN]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    DataLogging.@exec dist_comp = 0
 
     # @assert all(1 .≤ gind .≤ G)
     num_chgd = 0
@@ -943,6 +990,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
             fi = gind[i]
 
             @views v = _cost(data[:,i], centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
             sv = √̂(v)
             ubi = sv
             x = ci
@@ -950,6 +998,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
                 lbi[f] > ubi && continue
                 costsij = costsij_th[Threads.threadid()]
                 _costs_1_vs_range!(costsij, data, i, centroids, gr)
+                DataLogging.@exec dist_comp += length(gr)
                 v1, v2, x1 = Inf, Inf, 0
                 for j in gr
                     j == x && continue
@@ -995,7 +1044,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -1007,8 +1056,10 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
 
     w ≡ nothing || error("w unsupported with Ryy accelerator method")
 
-    DataLogging.@push_prefix! "P_FROM_C"
+    DataLogging.@push_prefix! "P_FROM_C[RYY]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    DataLogging.@exec dist_comp = 0
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
@@ -1026,6 +1077,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
             if active[ci]
                 old_v = costs[i]
                 @views v = _cost(datai, centroids[:,ci])
+                DataLogging.@exec dist_comp += 1
                 costs[i] = v
                 fullsearch = (v > old_v)
             else
@@ -1047,6 +1099,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                 !fullsearch && !gactive[f] && continue
                 costsij = costsij_th[Threads.threadid()]
                 _costs_1_vs_range!(costsij, data, i, centroids, gr)
+                DataLogging.@exec dist_comp += length(gr)
                 v1, v2, x1 = Inf, Inf, 0
                 for j in gr
                     j == x && continue
@@ -1091,7 +1144,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
     cost = sum(costs)
 
     config.cost = cost
-    DataLogging.@log "DONE time: $t cost: $cost"
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return num_chgd
 end
@@ -1116,7 +1169,7 @@ function sync_costs!(config::Configuration{<:Union{Hamerly,Yinyang,Exponion}}, d
         end
     end
     config.cost = sum(costs)
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $n"
     DataLogging.@pop_prefix!
     return config
 end
@@ -1139,7 +1192,7 @@ function sync_costs!(config::Configuration{SElk}, data::Mat64, w::Union{Vector{<
         end
     end
     config.cost = sum(costs)
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $n"
     DataLogging.@pop_prefix!
     return config
 end
@@ -1238,6 +1291,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract centroids: cmat=dmat
         @assert size(data) == (m, n)
 
+        DataLogging.@push_prefix! "C_FROM_P[NAIVE]"
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1255,6 +1310,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
         update_quads!(centroids)
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1263,6 +1319,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         @extract centroids: cmat=dmat
         @extract accel: active stable
         @assert size(data) == (m, n)
+
+        DataLogging.@push_prefix! "C_FROM_P[REDCOMP]"
 
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
@@ -1285,6 +1343,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
         update_quads!(centroids, stable)
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1295,6 +1354,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with KBall accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[KBALL]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1302,6 +1364,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         r[.~stable] .= 0.0
         lk = Threads.SpinLock()
@@ -1310,6 +1373,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             stable[j] && continue
             # r[j] = max(r[j], @views 2 * √̂(_cost(centroids[:,j], data[:,i])))
             v = @views _cost(centroids[:,j], data[:,i])
+            DataLogging.@exec dist_comp += 1
             costs[i] = v
             sv = 2 * √̂(v)
             if sv > r[j]
@@ -1327,6 +1391,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 cdist[j′, j] = cd - δ - δ′
             else
                 @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+                DataLogging.@exec dist_comp += 1
                 cdist[j′, j] = cd
             end
         end
@@ -1351,6 +1416,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             resize!(nj, ind)
             allstable && nj == old_nj && (nstable[j] = true)
         end
+
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1361,6 +1429,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with Hamerly accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[HAM]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1368,6 +1439,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
@@ -1395,6 +1467,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 end
             end
         end
+        DataLogging.@exec dist_comp += k^2 - k
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1405,6 +1480,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with Exponion accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[EXP]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1412,6 +1490,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
@@ -1442,6 +1521,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                 #     cdist[j′,j] = cd
                 else
                     @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+                    DataLogging.@exec dist_comp += 1
                     cdj[j′] = cd
                 end
                 if cd < s[j]
@@ -1452,6 +1532,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             update!(ann[j], cdj)
         end
 
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1462,6 +1544,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with SHam accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[SHAM]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1469,6 +1554,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
         @inbounds for j = 1:k
@@ -1490,11 +1576,14 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             for j′ = 1:k
                 j′ == j && continue
                 @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+                DataLogging.@exec dist_comp += 1
                 if cd < s[j]
                     s[j] = cd
                 end
             end
         end
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1505,6 +1594,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with SElk accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[SELK]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1512,6 +1604,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         @inbounds for i = 1:n
             ci = c[i]
@@ -1526,6 +1619,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             ub[i] += δc[ci]
         end
 
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1536,6 +1631,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with RElk accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[RELK]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1543,6 +1641,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         active .= .~stable
 
@@ -1553,6 +1652,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             end
         end
 
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1563,6 +1664,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with Yinyang accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[YIN]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1570,6 +1674,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         fill!(δcₘ, 0.0)
         fill!(δcₛ, 0.0)
@@ -1601,6 +1706,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             ci == jₘ[fi] || continue
             lb[fi,i] -= (δcₛ[fi] - δcₘ[fi])
         end
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1611,6 +1718,9 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
 
         w ≡ nothing || error("w unsupported with Ryy accelerator method")
 
+        DataLogging.@push_prefix! "C_FROM_P[KBALL]"
+        DataLogging.@exec dist_comp = 0
+
         new_centroids = get!(centroidsdict, (Threads.threadid(),m,k)) do
             zeros(Float64, m, k)
         end
@@ -1618,6 +1728,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
         _sum_clustered_data!(new_centroids, data, c, stable)
 
         _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+        DataLogging.@exec dist_comp += k - count(stable)
 
         fill!(δcₘ, 0.0)
         fill!(δcₛ, 0.0)
@@ -1652,6 +1763,8 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             ci == jₘ[fi] || continue
             lb[fi,i] -= (δcₛ[fi] - δcₘ[fi])
         end
+        DataLogging.@log "dist_comp: $dist_comp"
+        DataLogging.@pop_prefix!
         return config
     end
 
@@ -1914,6 +2027,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
     ncandidates::Int = NC
 
     DataLogging.@log "LOCAL_VARS n: $n ncandidates: $ncandidates"
+    DataLogging.@exec dist_comp = 0
 
     t = @elapsed @inbounds config = begin
         centr = zeros(m, k)
@@ -1924,6 +2038,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
         # costs = compute_costs_one(data, datay, w)
         costs = zeros(n)
         _costs_1_vs_all!(costs, data, y, data, w)
+        DataLogging.@exec dist_comp += n
 
         curr_cost = sum(costs)
         c = ones(Int, n)
@@ -1941,6 +2056,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
             y_best = 0
             for y in candidates
                 _costs_1_vs_all!(new_costs, data, y, data, w)
+                DataLogging.@exec dist_comp += n
                 # datay = @view data[:,y]
                 # compute_costs_one!(new_costs, data, datay, w)
                 cost = 0.0
@@ -1971,7 +2087,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
         # returning config
         Configuration{A}(data, c, costs, KMMatrix(centr))
     end
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return config
 end
@@ -1986,6 +2102,7 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
     @assert L isa Int
 
     DataLogging.@log "LOCAL_VARS n: $n L: $L"
+    DataLogging.@exec dist_comp = 0
 
     t = @elapsed config = begin
         centr = zeros(m, k)
@@ -1995,6 +2112,7 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
 
         costs = zeros(n)
         _costs_1_vs_all!(costs, data, y, data, w)
+        DataLogging.@exec dist_comp += n
         q = costs ./ 2 .+ (1 / 2n)
         pw = Weights(w ≡ nothing ? q : q .* w)
 
@@ -2015,6 +2133,7 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
                 end
             end
             _costs_1_vs_all!(new_costs, data, y, data, w)
+            DataLogging.@exec dist_comp += n
             # NOTE: here we update all costs, which is O(n)
             # this in some way defies the purpose of the algorithm, which is aimed at
             # getting O(mk²). We could recompute the costs on the fly every time.
@@ -2031,7 +2150,7 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
         # returning config
         Configuration{A}(data, c, costs, KMMatrix(centr))
     end
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return config
 end
@@ -2082,6 +2201,7 @@ function init_centroids(::KMPlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelera
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
 
     DataLogging.@log "LOCAL_VARS n: $n ncandidates: 1"
+    DataLogging.@exec dist_comp = 0
 
     t = @elapsed config = begin
         centr = zeros(m, k)
@@ -2090,6 +2210,7 @@ function init_centroids(::KMPlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelera
         centr[:,1] = datay
 
         costs = compute_costs_one(data, datay, w)
+        DataLogging.@exec dist_comp += n
 
         c = ones(Int, n)
 
@@ -2099,13 +2220,14 @@ function init_centroids(::KMPlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelera
             datay = @view data[:,y]
 
             update_costs_one!(costs, c, j, data, datay, w)
+            DataLogging.@exec dist_comp += n
 
             centr[:,j] .= datay
         end
         # returning config
         Configuration{A}(data, c, costs, KMMatrix(centr))
     end
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return config
 end
@@ -2116,6 +2238,7 @@ function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator};
     @assert n ≥ k
 
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
+    DataLogging.@exec dist_comp = 0
 
     t = @elapsed config = begin
         centr = zeros(m, k)
@@ -2124,6 +2247,7 @@ function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator};
         centr[:,1] = datay
 
         costs = compute_costs_one(data, datay)
+        DataLogging.@exec dist_comp += n
 
         c = ones(Int, n)
 
@@ -2132,13 +2256,14 @@ function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator};
             datay = @view data[:,y]
 
             update_costs_one!(costs, c, j, data, datay)
+            DataLogging.@exec dist_comp += n
 
             centr[:,j] .= datay
         end
         # returning config
         Configuration{A}(data, c, costs, KMMatrix(centr))
     end
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return config
 end
@@ -2198,6 +2323,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
         DataLogging.@pop_prefix!
         return Configuration{A}(data, centroids)
     end
+    DataLogging.@exec dist_comp = 0
 
     # csizes′ = zeros(Int, k)
     # for i = 1:n
@@ -2210,6 +2336,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
     vs = Threads.resize_nthreads!(Tuple{Float64,Int}[], (Inf, 0))
     t_costs = @elapsed @inbounds for j = 1:k
         nns_costs[j], nns[j] = _get_nns(vs, j, k, cmat, csizes)
+        DataLogging.@exec dist_comp += k-1
     end
 
     t_fuse = @elapsed @inbounds while k > tgt_k
@@ -2258,6 +2385,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
             if j == jm || nns[j] == jm || nns[j] == js
                 num_fullupdates += 1
                 nns_costs[j], nns[j] = _get_nns(vs, j, k-1, cmat, csizes)
+                DataLogging.@exec dist_comp += k-2
             # 2) clusters that did not point to jm or js
             #    only compare the old cost with the cost for the updated cluster
             else
@@ -2267,6 +2395,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
                 j′ = jm
                 z′ = csizes[j′]
                 v′ = _merge_cost(cmat, z, z′, j, j′)
+                DataLogging.@exec dist_comp += 1
                 if v′ < v
                     v, x = v′, j′
                 end
@@ -2284,7 +2413,7 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
 
     mconfig = Configuration{A}(data, KMMatrix(cmat[:,1:k]))
 
-    DataLogging.@log "DONE t_costs: $t_costs t_fuse: $t_fuse"
+    DataLogging.@log "DONE t_costs: $t_costs t_fuse: $t_fuse dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return mconfig
 end
@@ -2445,6 +2574,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
     @assert n ≥ k
 
     DataLogging.@log "INPUTS m: $m n: $n k: $k"
+    DataLogging.@exec dist_comp = 0
 
     t = @elapsed config = begin
         centr = zeros(m, 1)
@@ -2453,6 +2583,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
         centr[:,1] = datay
 
         costs = compute_costs_one(data, datay)
+        DataLogging.@exec dist_comp += n
 
         cost = sum(costs)
         c = ones(Int, n)
@@ -2472,6 +2603,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
                             v, x = v′, k′ + j
                         end
                     end
+                    DataLogging.@exec dist_comp += add_k
                     costs[i], c[i] = v, x
                 end
             end
@@ -2494,7 +2626,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
         # partition_from_centroids!(mconfig, data)
         # mconfig
     end
-    DataLogging.@log "DONE time: $t cost: $(config.cost)"
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $dist_comp"
     DataLogging.@pop_prefix!
     return config
 end
