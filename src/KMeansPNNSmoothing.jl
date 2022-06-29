@@ -1317,7 +1317,6 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
                     r[j] = sv
                 end
             end
-            # r[j] = max(r[j], @views √̂(_cost(centroids[:,j], data[:,i])))
         end
 
         @inbounds for j = 1:k, j′ = 1:k
@@ -1453,6 +1452,7 @@ let centroidsdict = Dict{NTuple{3,Int},Matrix{Float64}}(),
             # update!(ann[j], cdj, stj ? stable : nothing) # only for SortedAnnuli
             update!(ann[j], cdj)
         end
+
         return config
     end
 
@@ -1878,29 +1878,29 @@ function init_centroids(::KMUnif, data::Mat64, k::Int, A::Type{<:Accelerator}; k
     return config
 end
 
-function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::Nothing = nothing)
+function compute_costs_one!(costs::Vector{Float64}, data::Mat64, x::AbstractVector{Float64}, w::Nothing = nothing)
     m, n = size(data)
     @assert length(costs) == n
     @assert length(x) == m
 
     Threads.@threads for i = 1:n
-        @inbounds @views costs[i] = _cost(data[:,i], x)
+        @inbounds costs[i] = _cost(@view(data[:,i]), x)
     end
     return costs
 end
 
-function compute_costs_one!(costs::Vector{Float64}, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::AbstractVector{<:Real})
+function compute_costs_one!(costs::Vector{Float64}, data::Mat64, x::AbstractVector{Float64}, w::AbstractVector{<:Real})
     m, n = size(data)
     @assert length(costs) == n
     @assert length(x) == m
     @assert length(w) == n
 
     Threads.@threads for i = 1:n
-        @inbounds @views costs[i] = w[i] * _cost(data[:,i], x)
+        @inbounds costs[i] = w[i] * _cost(@view(data[:,i]), x)
     end
     return costs
 end
-compute_costs_one(data::AbstractMatrix{<:Float64}, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
+compute_costs_one(data::Mat64, args...) = compute_costs_one!(Array{Float64}(undef,size(data,2)), data, args...)
 
 init_centroids(::KMPlusPlus{nothing}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) =
     init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k, A; kw...)
@@ -1916,13 +1916,15 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
 
     DataLogging.@log "LOCAL_VARS n: $n ncandidates: $ncandidates"
 
-    t = @elapsed config = begin
+    t = @elapsed @inbounds config = begin
         centr = zeros(m, k)
         y = (w ≡ nothing ? rand(1:n) : sample(1:n, Weights(w)))
         datay = @view data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data.dmat, datay, w)
+        # costs = compute_costs_one(data, datay, w)
+        costs = zeros(n)
+        _costs_1_vs_all!(costs, data, y, data, w)
 
         curr_cost = sum(costs)
         c = ones(Int, n)
@@ -1930,16 +1932,20 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
         new_costs, new_c = similar(costs), similar(c)
         new_costs_best, new_c_best = similar(costs), similar(c)
         for j = 2:k
+            for i in 1:n
+                costs[i] = Θ(costs[i])
+            end
             pw = Weights(w ≡ nothing ? costs : costs .* w)
             nonz = count(pw .≠ 0)
             candidates = sample(1:n, pw, min(ncandidates,n,nonz), replace = false)
             cost_best = Inf
             y_best = 0
             for y in candidates
-                datay = @view data[:,y]
-                compute_costs_one!(new_costs, data.dmat, datay, w)
+                _costs_1_vs_all!(new_costs, data, y, data, w)
+                # datay = @view data[:,y]
+                # compute_costs_one!(new_costs, data, datay, w)
                 cost = 0.0
-                @inbounds for i = 1:n
+                for i = 1:n
                     v = new_costs[i]
                     v′ = costs[i]
                     if v < v′
@@ -1985,10 +1991,11 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
     t = @elapsed config = begin
         centr = zeros(m, k)
         y = (w ≡ nothing ? rand(1:n) : sample(1:n, Weights(w)))
-        datay = data[:,y]
+        datay = @view data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data, datay, w)
+        costs = zeros(n)
+        _costs_1_vs_all!(costs, data, y, data, w)
         q = costs ./ 2 .+ (1 / 2n)
         pw = Weights(w ≡ nothing ? q : q .* w)
 
@@ -2008,8 +2015,7 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
                     v, y = v′, y′
                 end
             end
-            datay = data[:,y]
-            compute_costs_one!(new_costs, data, datay, w)
+            _costs_1_vs_all!(new_costs, data, y, data, w)
             # NOTE: here we update all costs, which is O(n)
             # this in some way defies the purpose of the algorithm, which is aimed at
             # getting O(mk²). We could recompute the costs on the fly every time.
@@ -2021,17 +2027,17 @@ function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerato
                     costs[i], c[i] = v, j
                 end
             end
-            centr[:,j] .= datay
+            centr[:,j] .= @view data[:,y]
         end
         # returning config
-        Configuration{A}(data, c, costs, centr)
+        Configuration{A}(data, c, costs, KMMatrix(centr))
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"
     DataLogging.@pop_prefix!
     return config
 end
 
-function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::Nothing = nothing)
+function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::Mat64, x::AbstractVector{Float64}, w::Nothing = nothing)
     m, n = size(data)
     @assert length(costs) == n
     @assert length(c) == n
@@ -2050,7 +2056,7 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
     return costs
 end
 
-function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::AbstractMatrix{<:Float64}, x::AbstractVector{<:Float64}, w::AbstractVector{<:Real})
+function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data::Mat64, x::AbstractVector{Float64}, w::AbstractVector{<:Real})
     m, n = size(data)
     @assert length(costs) == n
     @assert length(c) == n
@@ -2084,16 +2090,16 @@ function init_centroids(::KMPlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelera
         datay = @view data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data.dmat, datay, w)
+        costs = compute_costs_one(data, datay, w)
 
         c = ones(Int, n)
 
-        for j = 2:k
+        @inbounds for j = 2:k
             pw = Weights(w ≡ nothing ? costs : costs .* w)
             y = sample(1:n, pw)
             datay = @view data[:,y]
 
-            update_costs_one!(costs, c, j, data.dmat, datay, w)
+            update_costs_one!(costs, c, j, data, datay, w)
 
             centr[:,j] .= datay
         end
@@ -2118,7 +2124,7 @@ function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator};
         datay = @view data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data.dmat, datay)
+        costs = compute_costs_one(data, datay)
 
         c = ones(Int, n)
 
@@ -2126,7 +2132,7 @@ function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator};
             y = argmax(costs)
             datay = @view data[:,y]
 
-            update_costs_one!(costs, c, j, data.dmat, datay)
+            update_costs_one!(costs, c, j, data, datay)
 
             centr[:,j] .= datay
         end
@@ -2420,7 +2426,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
         datay = @view data[:,y]
         centr[:,1] = datay
 
-        costs = compute_costs_one(data.dmat, datay)
+        costs = compute_costs_one(data, datay)
 
         cost = sum(costs)
         c = ones(Int, n)
@@ -2455,7 +2461,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
         # @assert all(z .> 0)
         centroids = KMMatrix(centr)
         cconfig = init_centroids(KMPlusPlus{1}(), centroids, k, ReducedComparison; w=z)
-        lloyd!(cconfig, centroids, 1_000, 1e-4, false, z)
+        lloyd!(cconfig, centroids, 1_000, 0.0, false, z)
         Configuration{A}(data, cconfig.centroids)
         # mconfig = Configuration{A}(m, k′, n, c, costs, centr)
         # pairwise_nn!(mconfig, k)

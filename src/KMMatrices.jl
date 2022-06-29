@@ -79,13 +79,22 @@ Base.@propagate_inbounds function _cost(d1, d2)
     return v1
 end
 
-Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}) where {T}
+Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, w::Nothing = nothing) where {T}
     @extract m1: d1=dviews[i] q1=dquads[i]
     @extract m2: d2=dmat q2=dquads
     mul!(ret, d2', d1)
     # ret .= q1 .+ q2 .- 2 .* ret
     @simd for j = 1:length(ret)
         ret[j] = q1 + q2[j] - 2 * ret[j]
+    end
+end
+
+Base.@propagate_inbounds function _costs_1_vs_all!(ret::AbstractVector{T}, m1::KMMatrix{T}, i::Int, m2::KMMatrix{T}, w::AbstractVector{<:Real}) where {T}
+    @extract m1: d1=dviews[i] q1=dquads[i]
+    @extract m2: d2=dmat q2=dquads
+    mul!(ret, d2', d1)
+    @simd for j = 1:length(ret)
+        ret[j] = w[j] * (q1 + q2[j] - 2 * ret[j])
     end
 end
 
