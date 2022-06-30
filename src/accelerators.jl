@@ -1,418 +1,66 @@
-struct Naive <: Accelerator
-    config::Configuration
-    Naive(config::Configuration{Naive}) = new(config)
+## generic falbacks and reference implementations
+_complete_initialization_none!(config::Configuration, data::Mat64) = config
+
+function _complete_initialization_ub!(config::Configuration, data::Mat64)
+    @extract config: n costs accel
+    @extract accel: ub
+
+    @inbounds @simd for i = 1:n
+        ub[i] = √̂(costs[i])
+    end
+
+    return config
 end
 
-Base.copy(accel::Naive) = accel
-reset!(accel::Naive) = accel
+reset!(accel::Accelerator) = error("not implemented")
 
-struct ReducedComparison <: Accelerator
-    config::Configuration
-    active::BitVector
-    stable::BitVector
-    function ReducedComparison(config::Configuration{ReducedComparison})
-        @extract config : centroids
-        m, k = size(centroids)
-        active = trues(k)
-        stable = falses(k)
-        return new(config, active, stable)
-    end
-    function Base.copy(accel::ReducedComparison)
-        @extract accel : config active stable
-        return new(config, copy(active), copy(stable))
-    end
-end
+partition_from_centroids_from_scratch!(config::Configuration, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing) = error("not implemented")
+partition_from_centroids!(config::Configuration, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing) = error("not implemented")
 
-function reset!(accel::ReducedComparison)
-    @extract accel : active stable
-    fill!(active, true)
-    fill!(stable, false)
-    return accel
-end
+sync_costs!(config::Configuration, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing) = config
 
-struct KBall <: Accelerator
-    config::Configuration{KBall}
-    δc::Vector{Float64}
-    r::Vector{Float64}
-    cdist::Matrix{Float64}
-    neighb::Vector{Vector{Int}}
-    stable::Vector{Bool} # there's too much hopping around for BitVector
-    nstable::Vector{Bool}
-    function KBall(config::Configuration{KBall})
-        # @extract config : centroids
-        centroids = config.centroids.dmat # XXX
-        m, k = size(centroids)
-        δc = zeros(k)
-        r = fill(Inf, k)
-        cdist = [@inbounds @views √_cost(centroids[:,i], centroids[:,j]) for i = 1:k, j = 1:k] # TODO
-        neighb = [deleteat!(collect(1:k), j) for j = 1:k]
-        stable = fill(false, k)
-        nstable = fill(false, k)
-        return new(config, δc, r, cdist, neighb, stable, nstable)
-    end
-    function Base.copy(accel::KBall)
-        @extract accel : config δc r cdist neighb stable nstable
-        return new(config, copy(δc), copy(r), copy(cdist), copy.(neighb), copy(stable), copy(nstable))
-    end
-end
+function _sync_costs_ub!(config::Configuration, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: ub
+    @assert size(data) == (m, n)
 
-function reset!(accel::KBall)
-    @extract accel : config δc r cdist neighb stable nstable
-    @extract config : k
-    centroids = config.centroids.dmat # XXX
-    fill!(δc, 0.0)
-    fill!(r, Inf)
-    @inbounds for j = 1:k, i = 1:k
-        cdist[i,j] = √_cost(centroids[:,i], centroids[:,j])
-    end
-    neighb .= [deleteat!(collect(1:k), j) for j = 1:k]
-    fill!(stable, false)
-    fill!(nstable, false)
-    return accel
-end
+    w ≡ nothing || error("w unsupported with Hamerly, Yinyang or Exponion accelerator method")
 
-struct Hamerly <: Accelerator
-    config::Configuration{Hamerly}
-    δc::Vector{Float64}
-    lb::Vector{Float64}
-    ub::Vector{Float64}
-    s::Vector{Float64}
-    stable::BitVector
-    function Hamerly(config::Configuration{Hamerly})
-        @extract config : n k
-        centroids = config.centroids.dmat # XXX
-        δc = zeros(k)
-        lb = zeros(n)
-        ub = fill(Inf, n)
-        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        stable = falses(k)
-        return new(config, δc, lb, ub, s, stable)
-    end
-    function Base.copy(accel::Hamerly)
-        @extract accel : config δc lb ub s stable
-        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s), copy(stable))
-    end
-end
-
-function reset!(accel::Hamerly)
-    @extract accel : config δc lb ub s stable
-    @extract config : k
-    centroids = config.centroids.dmat
-    fill!(δc, 0.0)
-    fill!(lb, 0.0)
-    fill!(ub, Inf)
-    @inbounds for j = 1:k
-        s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
-    end
-    fill!(stable, false)
-    return accel
-end
-
-include("Annuli.jl")
-using .Annuli
-
-struct Exponion <: Accelerator
-    config::Configuration{Exponion}
-    G::Int
-    δc::Vector{Float64}
-    lb::Vector{Float64}
-    ub::Vector{Float64}
-    cdist::Matrix{Float64}
-    s::Vector{Float64}
-    ann::Vector{SimplerAnnuli}
-    stable::BitVector
-    function Exponion(config::Configuration{Exponion})
-        @extract config : n k
-        G = ceil(Int, log2(k))
-        δc = zeros(k)
-        lb = zeros(n)
-        ub = fill(Inf, n)
-        # cdist = [@inbounds @views √_cost(centroids[:,j], centroids[:,j′]) for j = 1:k, j′ = 1:k]
-        # s = [@inbounds minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k) for j = 1:k]
-        cdist = ones(k, k)
-        for j = 1:k
-           cdist[j,j] = 0.0
-        end
-        s = zeros(k)
-        # ann = [@views SortedAnnuli(cdist[:,j], j) for j in 1:k]
-        ann = [SimplerAnnuli(k-1, j) for j in 1:k]
-        stable = falses(k)
-        return new(config, G, δc, lb, ub, cdist, s, ann, stable)
-    end
-    function Base.copy(accel::Exponion)
-        @extract accel : config G δc lb ub cdist s ann stable
-        return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(ann), copy(stable))
-    end
-end
-
-function reset!(accel::Exponion)
-    @extract accel : config δc lb ub cdist s ann stable
-    @extract config : k
-    centroids = config.centroids.dmat # XXX
-    fill!(δc, 0.0)
-    fill!(lb, 0.0)
-    fill!(ub, Inf)
-    @inbounds for j = 1:k
-        cdistj = @view cdist[:,j]
-        mincd = Inf
-        for j′ = 1:k
-            cdistj[j′] = @views √_cost(centroids[:,j], centroids[:,j′])
-            j′ ≠ j && (mincd = min(mincd, cdistj[j′]))
-        end
-        s[j] = mincd # minimum(j′ ≠ j ? cdist[j′,j] : Inf for j′ = 1:k)
-        update!(ann[j], cdistj)
-    end
-    fill!(stable, false)
-    return accel
-end
-
-struct SHam <: Accelerator
-    config::Configuration{SHam}
-    δc::Vector{Float64}
-    lb::Vector{Float64}
-    s::Vector{Float64}
-    stable::BitVector
-    function SHam(config::Configuration)
-        @extract config : n k
-        δc = zeros(k)
-        lb = zeros(n)
-        # s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
-        s = zeros(k)
-        stable = falses(k)
-        return new(config, δc, lb, s, stable)
-    end
-    function Base.copy(accel::SHam)
-        @extract accel : config δc lb s stable
-        return new(accel.config, copy(δc), copy(lb), copy(s), copy(stable))
-    end
-end
-
-function reset!(accel::SHam)
-    @extract accel : config δc lb s stable
-    @extract config : k
-    centroids = config.centroids.dmat # XXX
-    fill!(δc, 0.0)
-    fill!(lb, 0.0)
-    @inbounds for j = 1:k
-        s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
-    end
-    fill!(stable, false)
-    return accel
-end
-
-struct SElk <: Accelerator
-    config::Configuration{SElk}
-    δc::Vector{Float64}
-    lb::Matrix{Float64}
-    ub::Vector{Float64}
-    stable::BitVector
-    function SElk(config::Configuration)
-        @extract config : n k
-        δc = zeros(k)
-        lb = zeros(k, n)
-        ub = fill(Inf, n)
-        stable = falses(k)
-        return new(config, δc, lb, ub, stable)
-    end
-    function Base.copy(accel::SElk)
-        @extract accel : config δc ls ub stable
-        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(stable))
-    end
-end
-
-function reset!(accel::SElk)
-    @extract accel : δc lb ub stable
-    fill!(δc, 0.0)
-    fill!(lb, 0.0)
-    fill!(ub, Inf)
-    fill!(stable, false)
-    return accel
-end
-
-
-struct RElk <: Accelerator
-    config::Configuration{RElk}
-    δc::Vector{Float64}
-    lb::Matrix{Float64}
-    active::BitVector
-    stable::BitVector
-    function RElk(config::Configuration)
-        @extract config : n k
-        δc = zeros(k)
-        lb = zeros(k, n)
-        active = trues(k)
-        stable = falses(k)
-        return new(config, δc, lb, active, stable)
-    end
-    function Base.copy(accel::RElk)
-        @extract accel : config δc lb active stable
-        return new(accel.config, copy(δc), copy(lb), copy(active), copy(stable))
-    end
-end
-
-function reset!(accel::RElk)
-    @extract accel : δc lb active stable
-    fill!(δc, 0.0)
-    fill!(lb, 0.0)
-    fill!(active, true)
-    fill!(stable, false)
-    return accel
-end
-
-
-function gen_groups(k, G)
-    b = k÷G
-    r = k - b*G
-    # gr = [(1:(b+(f≤r))) .+ (f≤r ? (b+1)*(f-1) : (b+1)*r + b*(f-r-1)) for f = 1:G]
-    groups = [(1:(b+(f≤r))) .+ ((b+1)*(f-1) - max(f-r-1,0)) for f = 1:G]
-    @assert vcat(groups...) == 1:k gr,vcat(groups...),1:k
-    return groups
-end
-
-function cluster_centroids!(centroids::Mat64, G::Int)
-    G == 1 && return [1:size(centroids,2)]
-    ## we save/restore the RNG to make results comparable across accelerators
-    ## (especially relevant with KMPNNS seeders)
-    rng_bk = copy(Random.GLOBAL_RNG)
-    result = kmeans(centroids.dmat, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
-    copy!(Random.GLOBAL_RNG, rng_bk)
-    groups = UnitRange{Int}[]
-    new_dmat = similar(centroids.dmat)
-    new_dquads = similar(centroids.dquads)
-    ind = 0
-    for f = 1:G
-        gr_inds = findall(result.labels .== f)
-        gr_size = length(gr_inds)
-        r = ind .+ (1:gr_size)
-        new_dmat[:,r] = centroids.dmat[:,gr_inds]
-        new_dquads[r] = centroids.dquads[gr_inds]
-        push!(groups, r)
-        ind += gr_size
-    end
-    new_centroids = KMMatrix(new_dmat, new_dquads)
-    # @assert vcat(groups...) == 1:k
-    copy!(centroids, new_centroids)
-    return groups
-end
-
-struct Yinyang <: Accelerator
-    config::Configuration{Yinyang}
-    G::Int
-    δc::Vector{Float64}
-    δcₘ::Vector{Float64}
-    δcₛ::Vector{Float64}
-    jₘ::Vector{Float64}
-    ub::Vector{Float64}
-    groups::Vector{UnitRange{Int}}
-    gind::Vector{Int}
-    lb::Matrix{Float64}
-    stable::BitVector
-    function Yinyang(config::Configuration)
-        @extract config : n k centroids
-        G = max(1, round(Int, k / 10))
-        δc = zeros(k)
-        δcₘ = zeros(G)
-        δcₛ = zeros(G)
-        jₘ = zeros(Int, G)
-        ub = fill(Inf, n)
-        gind = zeros(Int, n)
-        lb = zeros(G, n)
-        stable = falses(k)
-
-        ## cluster the centroids
-        # groups = gen_groups(k, G)
-        groups = cluster_centroids!(centroids, G)
-        return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable)
-    end
-    function Base.copy(accel::Yinyang)
-        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable))
-    end
-
-end
-
-function reset!(accel::Yinyang)
-    @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable
-    @extract config : n c
-    fill!(δc, 0.0)
-    fill!(δcₘ, 0.0)
-    fill!(δcₛ, 0.0)
-    fill!(jₘ, 0)
-    fill!(ub, Inf)
-    @inbounds for i = 1:n
-        ci = c[i]
-        for (f,gr) in enumerate(groups)
-            if last(gr) ≥ ci
-                gind[i] = f
-                break
-            end
+    DataLogging.@push_prefix! "SYNC"
+    # t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            @views v = _cost(data[:,i], centroids[:,ci])
+            costs[i] = v
+            ub[i] = √̂(v)
         end
     end
-    fill!(lb, 0.0)
-    fill!(stable, false)
-    return accel
+    config.cost = sum(costs)
+    DataLogging.@log "DONE time: $t cost: $(config.cost) dist_comp: $n"
+    DataLogging.@pop_prefix!
+    return config
 end
 
-struct Ryy <: Accelerator
-    config::Configuration{Ryy}
-    G::Int
-    δc::Vector{Float64}
-    δcₘ::Vector{Float64}
-    δcₛ::Vector{Float64}
-    jₘ::Vector{Float64}
-    ub::Vector{Float64}
-    groups::Vector{UnitRange{Int}}
-    gind::Vector{Int}
-    lb::Matrix{Float64}
-    stable::BitVector
-    active::BitVector
-    gactive::BitVector
-    function Ryy(config::Configuration)
-        @extract config : n k centroids
-        G = max(1, round(Int, k / 10))
-        δc = zeros(k)
-        δcₘ = zeros(G)
-        δcₛ = zeros(G)
-        jₘ = zeros(Int, G)
-        ub = fill(Inf, n)
-        gind = zeros(Int, n)
-        lb = zeros(G, n)
-        stable = falses(k)
-        active = trues(k)
-        gactive = trues(G)
+## Load accelerator files
 
-        ## cluster the centroids
-        # groups = gen_groups(k, G)
-        groups = cluster_centroids!(centroids, G)
-        return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable, active, gactive)
-    end
-    function Base.copy(accel::Ryy)
-        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable), copy(active), copy(gactive))
-    end
+const accel_dir = joinpath(@__DIR__, "accelerators")
+## load all julia files in the accel_dir, without descending in subdirectories
+## silently skip files starting with an underscore
+const valid_accel_name = r"^([^/_][^/]*)\.jl$"
 
+macro include_accel(filename)
+    if !occursin(valid_accel_name, filename)
+        startswith(filename, '_') || @warn("Unrecogniezd file $filename, skipping")
+        return :()
+    end
+    modname = Symbol(replace(filename, valid_accel_name => s"\1"))
+    quote
+        include(joinpath(accel_dir, $(esc(filename))))
+        # using .$modname
+    end
 end
 
-function reset!(accel::Ryy)
-    @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
-    @extract config : n c
-    fill!(δc, 0.0)
-    fill!(δcₘ, 0.0)
-    fill!(δcₛ, 0.0)
-    fill!(jₘ, 0)
-    fill!(ub, Inf)
-    @inbounds for i = 1:n
-        ci = c[i]
-        for (f,gr) in enumerate(groups)
-            if last(gr) ≥ ci
-                gind[i] = f
-                break
-            end
-        end
-    end
-    fill!(lb, 0.0)
-    fill!(stable, false)
-    fill!(active, true)
-    fill!(gactive, true)
-    return accel
+for filename in filter(f->endswith(f, ".jl"), readdir(accel_dir))
+    @eval @include_accel $filename
 end

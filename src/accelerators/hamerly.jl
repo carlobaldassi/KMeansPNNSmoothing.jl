@@ -1,0 +1,351 @@
+struct Hamerly <: Accelerator
+    config::Configuration{Hamerly}
+    δc::Vector{Float64}
+    lb::Vector{Float64}
+    ub::Vector{Float64}
+    s::Vector{Float64}
+    stable::BitVector
+    function Hamerly(config::Configuration{Hamerly})
+        @extract config : n k
+        centroids = config.centroids.dmat # XXX
+        δc = zeros(k)
+        lb = zeros(n)
+        ub = fill(Inf, n)
+        s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
+        stable = falses(k)
+        return new(config, δc, lb, ub, s, stable)
+    end
+    function Base.copy(accel::Hamerly)
+        @extract accel : config δc lb ub s stable
+        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s), copy(stable))
+    end
+end
+
+function reset!(accel::Hamerly)
+    @extract accel : config δc lb ub s stable
+    @extract config : k
+    centroids = config.centroids.dmat
+    fill!(δc, 0.0)
+    fill!(lb, 0.0)
+    fill!(ub, Inf)
+    @inbounds for j = 1:k
+        s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
+    end
+    fill!(stable, false)
+    return accel
+end
+
+complete_initialization!(config::Configuration{Hamerly}, data::Mat64) = _complete_initialization_ub!(config, data)
+
+function partition_from_centroids_from_scratch!(config::Configuration{Hamerly}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: lb ub stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Hamerly or Exponion accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[HAM]"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
+            costs[i], c[i] = v1, x1
+            ub[i] = √̂(v1)
+            lb[i] = √̂(v2)
+        end
+    end
+    num_chgd = n
+    fill!(stable, false)
+    cost = sum(costs)
+    update_csizes!(config)
+
+    DataLogging.@exec dist_comp = n * k
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb ub s stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C[HAM]"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    DataLogging.@exec dist_comp = 0
+
+    num_chgd = 0
+    fill!(stable, true)
+    lk = Threads.SpinLock()
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            lbi, ubi = lb[i], ub[i]
+            hs = s[ci] / 2
+            lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
+            lbr > ubi && continue
+            @views v = _cost(data[:,i], centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
+            costs[i] = v
+            ub[i] = √̂(v)
+            lbr > ub[i] && continue
+
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            DataLogging.@exec dist_comp += k
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
+            if x1 ≠ ci
+                @lock lk begin
+                    num_chgd += 1
+                    stable[x1] = false
+                    stable[ci] = false
+                    csizes[x1] += 1
+                    csizes[ci] -= 1
+                end
+            end
+            costs[i], c[i] = v1, x1
+            ub[i], lb[i] = √̂(v1), √̂(v2)
+        end
+    end
+    cost = sum(costs)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+sync_costs!(config::Configuration{Hamerly}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing) = _sync_costs_ub!(config, data, w)
+
+function centroids_from_partition!(config::Configuration{Hamerly}, data::Mat64, w::Union{AbstractVector{<:Real},Nothing})
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb ub s stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with Hamerly accelerator method")
+
+    DataLogging.@push_prefix! "C_FROM_P[HAM]"
+    DataLogging.@exec dist_comp = 0
+
+    new_centroids = Cache.new_centroids(m, k)
+
+    _sum_clustered_data!(new_centroids, data, c, stable)
+
+    _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+    DataLogging.@exec dist_comp += k - count(stable)
+
+    δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
+    @inbounds for j = 1:k
+        δcj = δc[j]
+        if δcj > δcₘ
+            δcₛ = δcₘ
+            δcₘ, jₘ = δcj, j
+        elseif δcj > δcₛ
+            δcₛ = δcj
+        end
+    end
+    @inbounds for i = 1:n
+        ci = c[i]
+        lb[i] -= ifelse(ci == jₘ, δcₛ, δcₘ)
+        ub[i] += δc[c[i]]
+    end
+
+    @inbounds for j = 1:k
+        s[j] = Inf
+        for j′ = 1:k
+            j′ == j && continue
+            @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+            if cd < s[j]
+                s[j] = cd
+            end
+        end
+    end
+    DataLogging.@exec dist_comp += k^2 - k
+    DataLogging.@log "dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return config
+end
+
+
+struct SHam <: Accelerator
+    config::Configuration{SHam}
+    δc::Vector{Float64}
+    lb::Vector{Float64}
+    s::Vector{Float64}
+    stable::BitVector
+    function SHam(config::Configuration)
+        @extract config : n k
+        δc = zeros(k)
+        lb = zeros(n)
+        # s = [@inbounds @views √(minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)) for j = 1:k]
+        s = zeros(k)
+        stable = falses(k)
+        return new(config, δc, lb, s, stable)
+    end
+    function Base.copy(accel::SHam)
+        @extract accel : config δc lb s stable
+        return new(accel.config, copy(δc), copy(lb), copy(s), copy(stable))
+    end
+end
+
+function reset!(accel::SHam)
+    @extract accel : config δc lb s stable
+    @extract config : k
+    centroids = config.centroids.dmat # XXX
+    fill!(δc, 0.0)
+    fill!(lb, 0.0)
+    @inbounds for j = 1:k
+        s[j] = @views √minimum(j′ ≠ j ? _cost(centroids[:,j], centroids[:,j′]) : Inf for j′ = 1:k)
+    end
+    fill!(stable, false)
+    return accel
+end
+
+complete_initialization!(config::Configuration{SHam}, data::Mat64) = _complete_initialization_none!(config, data)
+
+function partition_from_centroids_from_scratch!(config::Configuration{SHam}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids accel
+    @extract accel: lb stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SHam accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C_SCRATCH[SHAM]"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
+            costs[i], c[i] = v1, x1
+            lb[i] = √̂(v2)
+        end
+    end
+    num_chgd = n
+    fill!(stable, false)
+    cost = sum(costs)
+    update_csizes!(config)
+
+    DataLogging.@exec dist_comp = n * k
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb s stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SHam accelerator method")
+
+    DataLogging.@push_prefix! "P_FROM_C[SHAM]"
+    DataLogging.@log "INPUTS k: $k n: $n m: $m"
+
+    costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
+
+    DataLogging.@exec dist_comp = 0
+
+    num_chgd = 0
+    lk = Threads.SpinLock()
+    t = @elapsed Threads.@threads for i in 1:n
+        @inbounds begin
+            ci = c[i]
+            @views v = _cost(data[:,i], centroids[:,ci])
+            DataLogging.@exec dist_comp += 1
+            costs[i] = v
+            lbi = lb[i]
+            hs = s[ci] / 2
+            lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
+            lbr > √̂(v) && continue
+
+            costsij = costsij_th[Threads.threadid()]
+            _costs_1_vs_all!(costsij, data, i, centroids)
+            DataLogging.@exec dist_comp += k
+            v1, v2, x1 = findmin_and_2ndmin(costsij)
+
+            if x1 ≠ ci
+                @lock lk begin
+                    num_chgd += 1
+                    stable[x1] = false
+                    stable[ci] = false
+                    csizes[x1] += 1
+                    csizes[ci] -= 1
+                end
+            end
+            costs[i], c[i] = v1, x1
+            lb[i] = √̂(v2)
+        end
+    end
+    cost = sum(costs)
+
+    config.cost = cost
+    DataLogging.@log "DONE time: $t cost: $cost dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return num_chgd
+end
+
+function centroids_from_partition!(config::Configuration{SHam}, data::Mat64, w::Union{AbstractVector{<:Real},Nothing})
+    @extract config: m k n c costs centroids csizes accel
+    @extract accel: δc lb s stable
+    @assert size(data) == (m, n)
+
+    w ≡ nothing || error("w unsupported with SHam accelerator method")
+
+    DataLogging.@push_prefix! "C_FROM_P[SHAM]"
+    DataLogging.@exec dist_comp = 0
+
+    new_centroids = Cache.new_centroids(m, k)
+
+    _sum_clustered_data!(new_centroids, data, c, stable)
+
+    _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
+    DataLogging.@exec dist_comp += k - count(stable)
+
+    δcₘ, δcₛ, jₘ = 0.0, 0.0, 0
+    @inbounds for j = 1:k
+        δcj = δc[j]
+        if δcj > δcₘ
+            δcₛ = δcₘ
+            δcₘ, jₘ = δcj, j
+        elseif δcj > δcₛ
+            δcₛ = δcj
+        end
+    end
+    @inbounds for i = 1:n
+        ci = c[i]
+        lb[i] -= ifelse(ci == jₘ, δcₛ, δcₘ)
+    end
+
+    @inbounds for j = 1:k
+        s[j] = Inf
+        for j′ = 1:k
+            j′ == j && continue
+            @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+            DataLogging.@exec dist_comp += 1
+            if cd < s[j]
+                s[j] = cd
+            end
+        end
+    end
+    DataLogging.@log "dist_comp: $dist_comp"
+    DataLogging.@pop_prefix!
+    return config
+end
