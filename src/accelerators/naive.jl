@@ -1,5 +1,5 @@
 struct Naive <: Accelerator
-    config::Configuration
+    config::Configuration{Naive}
     Naive(config::Configuration{Naive}) = new(config)
 end
 

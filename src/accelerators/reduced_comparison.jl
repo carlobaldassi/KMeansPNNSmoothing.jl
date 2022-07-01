@@ -1,5 +1,5 @@
 struct ReducedComparison <: Accelerator
-    config::Configuration
+    config::Configuration{ReducedComparison}
     active::BitVector
     stable::BitVector
     function ReducedComparison(config::Configuration{ReducedComparison})
