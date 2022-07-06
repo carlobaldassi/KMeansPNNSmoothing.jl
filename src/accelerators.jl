@@ -45,22 +45,32 @@ end
 ## Load accelerator files
 
 const accel_dir = joinpath(@__DIR__, "accelerators")
-## load all julia files in the accel_dir, without descending in subdirectories
-## silently skip files starting with an underscore
-const valid_accel_name = r"^([^/_][^/]*)\.jl$"
 
 macro include_accel(filename)
-    if !occursin(valid_accel_name, filename)
-        startswith(filename, '_') || @warn("Unrecogniezd file $filename, skipping")
-        return :()
-    end
-    modname = Symbol(replace(filename, valid_accel_name => s"\1"))
     quote
         include(joinpath(accel_dir, $(esc(filename))))
-        # using .$modname
     end
 end
 
-for filename in filter(f->endswith(f, ".jl"), readdir(accel_dir))
-    @eval @include_accel $filename
-end
+@include_accel "naive.jl"
+@include_accel "reduced_comparison.jl"
+@include_accel "hamerly.jl"
+@include_accel "elk.jl"
+@include_accel "exponion.jl"
+@include_accel "yinyang.jl"
+@include_accel "ball.jl"
+
+## Create a module to contain just the accelerators
+## to serve as a namespace that we can export
+
+module KMAccel
+
+import ..Naive,
+       ..ReducedComparison,
+       ..Hamerly, ..SHam,
+       ..SElk, ..RElk,
+       ..Exponion,
+       ..Yinyang, ..Ryy,
+       ..Ball
+
+end # module KMAccel

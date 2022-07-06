@@ -1,12 +1,12 @@
-struct KBall <: Accelerator
-    config::Configuration{KBall}
+struct Ball <: Accelerator
+    config::Configuration{Ball}
     δc::Vector{Float64}
     r::Vector{Float64}
     cdist::Matrix{Float64}
     neighb::Vector{Vector{Int}}
     stable::Vector{Bool} # there's too much hopping around for BitVector
     nstable::Vector{Bool}
-    function KBall(config::Configuration{KBall})
+    function Ball(config::Configuration{Ball})
         # @extract config : centroids
         centroids = config.centroids.dmat # XXX
         m, k = size(centroids)
@@ -18,13 +18,13 @@ struct KBall <: Accelerator
         nstable = fill(false, k)
         return new(config, δc, r, cdist, neighb, stable, nstable)
     end
-    function Base.copy(accel::KBall)
+    function Base.copy(accel::Ball)
         @extract accel : config δc r cdist neighb stable nstable
         return new(config, copy(δc), copy(r), copy(cdist), copy.(neighb), copy(stable), copy(nstable))
     end
 end
 
-function reset!(accel::KBall)
+function reset!(accel::Ball)
     @extract accel : config δc r cdist neighb stable nstable
     @extract config : k
     centroids = config.centroids.dmat # XXX
@@ -39,14 +39,14 @@ function reset!(accel::KBall)
     return accel
 end
 
-complete_initialization!(config::Configuration{KBall}, data::Mat64) = _complete_initialization_none!(config, data)
+complete_initialization!(config::Configuration{Ball}, data::Mat64) = _complete_initialization_none!(config, data)
 
-function partition_from_centroids_from_scratch!(config::Configuration{KBall}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+function partition_from_centroids_from_scratch!(config::Configuration{Ball}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids accel
     @extract accel: stable
     @assert size(data) == (m, n)
 
-    w ≡ nothing || error("w unsupported with KBall accelerator method")
+    w ≡ nothing || error("w unsupported with Ball accelerator method")
 
     DataLogging.@push_prefix! "P_FROM_C_SCRATCH[KBALL]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
@@ -73,12 +73,12 @@ function partition_from_centroids_from_scratch!(config::Configuration{KBall}, da
     return num_chgd
 end
 
-function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
+function partition_from_centroids!(config::Configuration{Ball}, data::Mat64, w::Union{Vector{<:Real},Nothing} = nothing)
     @extract config: m k n c costs centroids csizes accel
     @extract accel: δc r cdist neighb stable nstable
     @assert size(data) == (m, n)
 
-    w ≡ nothing || error("w unsupported with KBall accelerator method")
+    w ≡ nothing || error("w unsupported with Ball accelerator method")
 
     DataLogging.@push_prefix! "P_FROM_C[KBALL]"
     DataLogging.@log "INPUTS k: $k n: $n m: $m"
@@ -147,12 +147,12 @@ function partition_from_centroids!(config::Configuration{KBall}, data::Mat64, w:
     return num_chgd
 end
 
-function centroids_from_partition!(config::Configuration{KBall}, data::Mat64, w::Union{AbstractVector{<:Real},Nothing})
+function centroids_from_partition!(config::Configuration{Ball}, data::Mat64, w::Union{AbstractVector{<:Real},Nothing})
     @extract config: m k n c costs centroids csizes accel
     @extract accel: δc r cdist neighb stable nstable
     @assert size(data) == (m, n)
 
-    w ≡ nothing || error("w unsupported with KBall accelerator method")
+    w ≡ nothing || error("w unsupported with Ball accelerator method")
 
     DataLogging.@push_prefix! "C_FROM_P[KBALL]"
     DataLogging.@exec dist_comp = 0

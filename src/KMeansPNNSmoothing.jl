@@ -14,6 +14,7 @@ include("DataLogging.jl")
 using .DataLogging
 
 export kmeans,
+       KMAccel,
        KMeansSeeder, KMMetaSeeder,
        KMUnif, KMMaxMin, KMScala, KMPlusPlus, KMPNN,
        KMPNNS, KMPNNSR, KMRefine, KMAFKMC2
