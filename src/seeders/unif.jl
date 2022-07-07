@@ -1,13 +1,15 @@
 """
-    KMUnif()
+    Unif()
 
-The most basic `KMeansSeeder`: sample centroids uniformly at random from the
-dataset, without replacement.
+The most basic seeder: sample centroids uniformly at random from the
+dataset (without replacement).
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMUnif <: KMeansSeeder
+struct Unif <: Seeder
 end
 
-function init_centroids(::KMUnif, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
+function init_centroids(::Unif, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
     DataLogging.@push_prefix! "INIT_UNIF"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"

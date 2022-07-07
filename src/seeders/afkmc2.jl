@@ -1,15 +1,18 @@
 """
-    KMAFKMC2{M}()
+    AFKMC2{M}()
 
-A `KMeansSeeder` that uses Assumption-Free K-MC². The parameter `M` determines the
+The seeder for Assumption-Free K-MC². The parameter `M` determines the
 number of Monte Carlo steps. This algorithm is implemented in a way that is O(kND)
 instead of O(k²M) because we still need to compute the partition by the end. So it
-is provided only for testing; for practical purposes `KMPlusPlus` should be preferred.
+is provided only for testing; for practical purposes `KMSeed.PlusPlus` should be
+preferred.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMAFKMC2{M} <: KMeansSeeder
+struct AFKMC2{M} <: Seeder
 end
 
-function init_centroids(::KMAFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing) where L
+function init_centroids(::AFKMC2{L}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing) where L
     DataLogging.@push_prefix! "INIT_AFKMC2"
     m, n = size(data)
     @assert n ≥ k

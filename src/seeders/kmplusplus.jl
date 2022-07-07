@@ -1,23 +1,25 @@
 """
-    KMPlusPlus()
-    KMPlusPlus{NC}()
+    PlusPlus()
+    PlusPlus{NC}()
 
-A `KMeansSeeder` that uses kmeans++. The parameter `NC` determines the number of
+The seeder for kmeans++. The parameter `NC` determines the number of
 candidates for the "greedy" version of the algorithm. By default, it is `nothing`,
 meaning that it will use the value `log(2+k)`. Otherwise it must be an integer.
 The value `1` corresponds to the original (non-greedy) algorithm, which has a
 specialized implementation.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMPlusPlus{NC} <: KMeansSeeder
+struct PlusPlus{NC} <: Seeder
 end
 
-KMPlusPlus() = KMPlusPlus{nothing}()
+PlusPlus() = PlusPlus{nothing}()
 
 
-init_centroids(::KMPlusPlus{nothing}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) =
-    init_centroids(KMPlusPlus{floor(Int, 2 + log(k))}(), data, k, A; kw...)
+init_centroids(::PlusPlus{nothing}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) =
+    init_centroids(PlusPlus{floor(Int, 2 + log(k))}(), data, k, A; kw...)
 
-function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing) where NC
+function init_centroids(::PlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing) where NC
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k
@@ -92,7 +94,7 @@ function init_centroids(::KMPlusPlus{NC}, data::Mat64, k::Int, A::Type{<:Acceler
     return config
 end
 
-function init_centroids(::KMPlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing)
+function init_centroids(::PlusPlus{1}, data::Mat64, k::Int, A::Type{<:Accelerator}; w = nothing)
     DataLogging.@push_prefix! "INIT_PP"
     m, n = size(data)
     @assert n ≥ k

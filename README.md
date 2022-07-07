@@ -64,21 +64,21 @@ example the `runfile.jl` script in the `test` directory.)
 Here is an example run, assuming we want to cluster a `data` matrix into `k` clusters with
 the original kmeans++ algorithm (the `{1}` type parameter deactivates the "greedy" version)
 ```julia
-result = kmeans(data, k; kmseeder=KMPlusPlus{1}())
+result = kmeans(data, k; kmseeder=KMSeed.PlusPlus{1}())
 ```
 and here is an example running the PNN-smoothing scheme, using the non-greedy kmeans++ to
-initialize the initial sub-sets (this is actually the default if no keyword arguments are
+seed the initial sub-sets (this is actually the default if no keyword arguments are
 passed):
 ```julia
-result = kmeans(data, k; kmseeder=KMPNNS(KMPlusPlus{1}()))
+result = kmeans(data, k; kmseeder=KMSeed.PNNS(KMSeed.PlusPlus{1}()))
 ```
 and here is again PNN-smoothing but this time using "maxmin" at 2 levels of recursion:
 ```julia
-result = kmeans(data, k; kmseeder=KMPNNS(KMMaxMin(), rlevel=2))
+result = kmeans(data, k; kmseeder=KMSeed.PNNS(KMSeed.MaxMin(), rlevel=2))
 ```
 
 For the complete documentation you can use the Julia help (press the <kbd>?</kbd> key in
-the REPL, then type `kmeans`, or `KMeansSeeder`)
+the REPL, then type `kmeans`, or `KMSeed`)
 
 All codes are parallellized (in most cases over the data points) if there are threads
 available: either run Julia with the `-t` option or use the `JULIA_NUM_THREADS` environment

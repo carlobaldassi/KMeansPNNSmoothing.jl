@@ -1,12 +1,14 @@
 """
-    KMMaxMin()
+    MaxMin()
 
-A `KMeansSeeder` for the furthest-point heuristic, also called maxmin.
+The seeder for the furthest-point heuristic, also called maxmin.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMMaxMin <: KMeansSeeder
+struct MaxMin <: Seeder
 end
 
-function init_centroids(::KMMaxMin, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
+function init_centroids(::MaxMin, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
     DataLogging.@push_prefix! "INIT_MAXMIN"
     m, n = size(data)
     @assert n ≥ k

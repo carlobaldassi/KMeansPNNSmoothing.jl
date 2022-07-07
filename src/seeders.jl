@@ -1,35 +1,9 @@
-"""
-A `KMeansSeeder` object is used to specify the seeding algorithm.
-Currently the following basic objects are defined:
+abstract type Seeder end
 
-* `KMUnif`: sample centroids uniformly at random from the dataset, without replacement
-* `KMPlusPlus`: kmeans++ by Arthur and Vassilvitskii (2006)
-* `KMMaxMin`: furthest-point heuristic, by Katsavounidis et al. (1994)
-* `KMScala`: kmeans‖ also called "scalable kmeans++", by Bahmani et al. (2012)
-* `KMPNN`: pairwise nearest-neighbor hierarchical clustering, by Equitz (1989)
-
-There are also meta-methods, whose parent type is `KMMetaSeeder`, 
-
-* `KMPNNS`: the PNN-smoothing meta-method
-* `KMRefine`: the refine meta-method by Bradely and Fayyad (1998)
-
-For each of these object, there is a corresponding implementation of
-`init_centroids(::KMeansSeeder, data, k)`, which concretely performs the initialization.
-
-The documentation of each method explains the arguments that can be passed to
-control the initialization process.
-"""
-abstract type KMeansSeeder end
-
-"""
-A `KMMetaSeeder{S0<:KMeansSeeder}` object is a sub-type of `KMeansSeeder` representing a meta-method,
-using an object of type `S0` as an internal seeder.
-"""
-abstract type KMMetaSeeder{S0<:KMeansSeeder} <: KMeansSeeder end
+abstract type MetaSeeder{S0<:Seeder} <: Seeder end
 
 
-
-init_centroids(::KMeansSeeder, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) = error("not implemented")
+init_centroids(::Seeder, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) = error("not implemented")
 
 ## Load seeder files
 
@@ -37,7 +11,7 @@ init_centroids(::KMeansSeeder, data::Mat64, k::Int, A::Type{<:Accelerator}; kw..
 const seeder_dir = joinpath(@__DIR__, "seeders")
 
 macro include_seeder(filename)
-    modname = Symbol(replace(filename, r"\.jl$" => ""))
+    # modname = Symbol(replace(filename, r"\.jl$" => ""))
     quote
         include(joinpath(seeder_dir, $(esc(filename))))
         # using .$modname
@@ -52,6 +26,36 @@ end
 @include_seeder "pnn.jl"
 @include_seeder "pnns.jl"
 @include_seeder "refine.jl"
+
+## Create a module to contain just the seeders
+## to serve as a namespace that we can export
+
+"""
+The `KMSeed` module contains objects of type `Seeder` that can be passed
+to `kmeans` to control the initialization process:
+
+* `Unif`: sample centroids uniformly at random from the dataset, without replacement
+* `PlusPlus`: kmeans++ by Arthur and Vassilvitskii (2006)
+* `MaxMin`: furthest-point heuristic, by Katsavounidis et al. (1994)
+* `Scala`: kmeans‖ also called "scalable kmeans++", by Bahmani et al. (2012)
+* `PNN`: pairwise nearest-neighbor hierarchical clustering, by Equitz (1989)
+* `PNNS`: the PNN-smoothing meta-method
+* `Refine`: the refine meta-method by Bradely and Fayyad (1998)
+
+See the documentation of each method for details.
+"""
+module KMSeed
+
+import ..Unif,
+       ..PlusPlus,
+       ..AFKMC2,
+       ..MaxMin,
+       ..Scala,
+       ..PNN,
+       ..PNNS, ..PNNSR,
+       ..Refine
+
+end # module KMSeed
 
 
 function gen_seeder(
@@ -87,26 +91,26 @@ function gen_seeder(
     end
 
     if init ∈ all_basic_methods
-        return init == "++"    ? KMPlusPlus{ncandidates}() :
-               init == "unif"   ? KMUnif() :
-               init == "pnn"    ? KMPNN() :
-               init == "maxmin" ? KMMaxMin() :
-               init == "scala"  ? KMScala(J, ϕ) :
+        return init == "++"    ? PlusPlus{ncandidates}() :
+               init == "unif"   ? Unif() :
+               init == "pnn"    ? PNN() :
+               init == "maxmin" ? MaxMin() :
+               init == "scala"  ? Scala(J, ϕ) :
                error("wat")
     elseif init == "pnns" && init0 == "self"
         @assert rlevel == 0
         return KMPNNSR(;ρ)
     else
         @assert rlevel ≥ 1
-        kmseeder0 = init0 == "++"     ? KMPlusPlus{ncandidates}() :
-                    init0 == "unif"   ? KMUnif() :
-                    init0 == "pnn"    ? KMPNN() :
-                    init0 == "maxmin" ? KMMaxMin() :
-                    init0 == "scala"  ? KMScala(J, ϕ) :
+        kmseeder0 = init0 == "++"     ? PlusPlus{ncandidates}() :
+                    init0 == "unif"   ? Unif() :
+                    init0 == "pnn"    ? PNN() :
+                    init0 == "maxmin" ? MaxMin() :
+                    init0 == "scala"  ? Scala(J, ϕ) :
                     error("wat")
 
-        return init == "pnns"   ? KMPNNS(kmseeder0; ρ, rlevel) :
-               init == "refine" ? KMRefine(kmseeder0; J, rlevel) :
+        return init == "pnns"   ? PNNS(kmseeder0; ρ, rlevel) :
+               init == "refine" ? Refine(kmseeder0; J, rlevel) :
                error("wut")
     end
 end

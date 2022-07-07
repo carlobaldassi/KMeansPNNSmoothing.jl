@@ -1,25 +1,27 @@
 """
-    KMRefine(init0=KMPlusPlus{1}(); J=10, rlevel=1)
+    Refine(init0=KMSeed.PlusPlus{1}(); J=10, rlevel=1)
 
-A `KMMetaSeeder` to use the "refine" algorithm. The inner method `init0` can be any
-`KMeansSeeder`. The argument `J` sets the number of sub-sets. The argument `rlevel` sets the
+The seeder for the "refine" algorithm. The first argument `init0` can be any
+other seeder. The argument `J` sets the number of sub-sets. The argument `rlevel` sets the
 recursion level.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMRefine{S<:KMeansSeeder} <: KMMetaSeeder{S}
+struct Refine{S<:Seeder} <: MetaSeeder{S}
     init0::S
     J::Int
 end
-function KMRefine(init0::S = KMPlusPlus{1}(); J = 10, rlevel::Int = 1) where {S <: KMeansSeeder}
+function Refine(init0::S = PlusPlus{1}(); J = 10, rlevel::Int = 1) where {S <: Seeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = KMRefine{typeof(kmseeder)}(kmseeder, J)
+        kmseeder = Refine{typeof(kmseeder)}(kmseeder, J)
     end
     return kmseeder
 end
 
 
-function init_centroids(S::KMRefine{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
+function init_centroids(S::Refine{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
     @extract S : J
     DataLogging.@push_prefix! "INIT_REFINE"
     m, n = size(data)

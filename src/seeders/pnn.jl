@@ -1,14 +1,16 @@
 """
-    KMPNN()
+    PNN()
 
-A `KMeansSeeder` for the pairwise nearest-neighbor hierarchical clustering
+The seeder for the pairwise nearest-neighbor hierarchical clustering
 method. Note that this scales somewhere between the square and the cube of the number
 of points in the dataset.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMPNN <: KMeansSeeder
+struct PNN <: Seeder
 end
 
-function init_centroids(::KMPNN, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
+function init_centroids(::PNN, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
     DataLogging.@push_prefix! "INIT_PNN"
     m, n = size(data)
     DataLogging.@log "INPUTS m: $m n: $n k: $k"

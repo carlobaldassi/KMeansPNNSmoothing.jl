@@ -12,7 +12,7 @@ function cluster_centroids!(centroids::Mat64, G::Int)
     ## we save/restore the RNG to make results comparable across accelerators
     ## (especially relevant with KMPNNS seeders)
     rng_bk = copy(Random.GLOBAL_RNG)
-    result = kmeans(centroids.dmat, G; seed=rand(UInt64), kmseeder=KMPlusPlus{1}(), verbose=false, accel=ReducedComparison)
+    result = kmeans(centroids.dmat, G; seed=rand(UInt64), kmseeder=PlusPlus{1}(), verbose=false, accel=ReducedComparison)
     copy!(Random.GLOBAL_RNG, rng_bk)
     groups = UnitRange{Int}[]
     new_dmat = similar(centroids.dmat)

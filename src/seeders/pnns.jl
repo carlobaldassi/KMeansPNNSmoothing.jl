@@ -1,51 +1,53 @@
-struct _KMSelf <: KMeansSeeder
+struct _Self <: Seeder
 end
 
 """
-    KMPNNS(init0=KMPlusPlus{1}(); ρ=0.5, rlevel=1)
+    PNNS(init0=PlusPlus{1}(); ρ=0.5, rlevel=1)
 
-A `KMMetaSeeder` to use the PNN-smoothing algorithm. The inner method `init0` can be any
-`KMeansSeeder`. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
+The seeder for the PNN-smoothing algorithm. The first argument `init0` can be any
+other seeder. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
 where ``N`` is the number of data points and ``k`` the number of clusters, but the result is
 clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level.
 
-See `KMPNNSR` for the fully-recursive version.
+See `PNNSR` for the fully-recursive version.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMPNNS{S<:KMeansSeeder} <: KMMetaSeeder{S}
+struct PNNS{S<:Seeder} <: MetaSeeder{S}
     init0::S
     ρ::Float64
 end
-function KMPNNS(init0::S = KMPlusPlus{1}(); ρ = 0.5, rlevel::Int = 1) where {S <: KMeansSeeder}
+function PNNS(init0::S = PlusPlus{1}(); ρ = 0.5, rlevel::Int = 1) where {S <: Seeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = KMPNNS{typeof(kmseeder)}(kmseeder, ρ)
+        kmseeder = PNNS{typeof(kmseeder)}(kmseeder, ρ)
     end
     return kmseeder
 end
 
-const KMPNNSR = KMPNNS{_KMSelf}
+const PNNSR = PNNS{_Self}
 
 """
-    KMPNNSR(;ρ=0.5)
+    PNNSR(;ρ=0.5)
 
-The fully-recursive version of the `KMPNNS` seeder. It keeps splitting the dataset until the
-number of points is ``≤2k``, at which point it uses `KMPNN`. The `ρ` option is documented in `KMPNNS`.
+The fully-recursive version of the `PNNS` seeder. It keeps splitting the dataset until the
+number of points is ``≤2k``, at which point it uses `PNN`. The `ρ` option is documented in `PNNS`.
 """
-KMPNNSR(;ρ = 0.5) = KMPNNS{_KMSelf}(_KMSelf(), ρ)
+PNNSR(;ρ = 0.5) = PNNS{_Self}(_Self(), ρ)
 
 
 
-function inner_init(S::KMPNNSR, data::Mat64, k::Int, A::Type{<:Accelerator})
+function inner_init(S::PNNSR, data::Mat64, k::Int, A::Type{<:Accelerator})
     m, n = size(data)
     if n ≤ 2k
-        return init_centroids(KMPNN(), data, k, A)
+        return init_centroids(PNN(), data, k, A)
     else
         return init_centroids(S, data, k, A)
     end
 end
 
-inner_init(S::KMMetaSeeder{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}) where S0 = init_centroids(S.init0, data, k, A)
+inner_init(S::MetaSeeder{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}) where S0 = init_centroids(S.init0, data, k, A)
 
 function gen_fair_splits(n, J)
     b = n÷J
@@ -72,7 +74,7 @@ function gen_random_splits_quickndirty(n, J, k)
     return shuffle!(vcat((repeat([a], k) for a = 1:J)..., rand(1:J, (n - k*J))))
 end
 
-function init_centroids(S::KMPNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
+function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
     @extract S : ρ
     DataLogging.@push_prefix! "INIT_METANN"
     m, n = size(data)

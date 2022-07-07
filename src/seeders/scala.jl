@@ -1,17 +1,19 @@
 """
-    KMScala(;rounds=5, ϕ=2.0)
+    Scala(;rounds=5, ϕ=2.0)
 
-A `KMeansSeeder` for "scalable kmeans++" or kmeans‖. The `rounds` option
+The seeder for "scalable kmeans++" or kmeans‖. The `rounds` option
 determines the number of sampling rounds; the `ϕ` option determines the
 oversampling factor, which is then computed as `ϕ * k`.
+
+See also: `kmeans`, `KMSeed`.
 """
-struct KMScala <: KMeansSeeder
+struct Scala <: Seeder
     rounds::Int
     ϕ::Float64
-    KMScala(;rounds = 5, ϕ = 2.0) = new(rounds, ϕ)
+    Scala(;rounds = 5, ϕ = 2.0) = new(rounds, ϕ)
 end
 
-function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
+function init_centroids(S::Scala, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...)
     @extract S : rounds ϕ
     DataLogging.@push_prefix! "INIT_SCALA"
     m, n = size(data)
@@ -62,7 +64,7 @@ function init_centroids(S::KMScala, data::Mat64, k::Int, A::Type{<:Accelerator};
         end
         # @assert all(z .> 0)
         centroids = KMMatrix(centr)
-        cconfig = init_centroids(KMPlusPlus{1}(), centroids, k, ReducedComparison; w=z)
+        cconfig = init_centroids(PlusPlus{1}(), centroids, k, ReducedComparison; w=z)
         lloyd!(cconfig, centroids, 1_000, 0.0, false, z)
         Configuration{A}(data, cconfig.centroids)
         # mconfig = Configuration{A}(m, k′, n, c, costs, centr)

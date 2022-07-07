@@ -14,10 +14,7 @@ include("DataLogging.jl")
 using .DataLogging
 
 export kmeans,
-       KMAccel,
-       KMeansSeeder, KMMetaSeeder,
-       KMUnif, KMMaxMin, KMScala, KMPlusPlus, KMPNN,
-       KMPNNS, KMPNNSR, KMRefine, KMAFKMC2
+       KMAccel, KMSeed
 
 include("Cache.jl")
 include("Utils.jl")
@@ -199,9 +196,9 @@ The keyword arguments are:
   points.
 * `seed`: random seed, either an integer or `nothing` (this is the default, it means no seeding
   is performed).
-* `kmseeder`: seeder for the initial configuration (default=`KMPNNS()`). It can be a `KMeansSeeder`
-  or a `Matrix{Float64}`. If it's a matrix, it represents the initial centroids (by column).
-  See the documentation for `KMeansSeeder` for a list of available seeding algorithms and their
+* `kmseeder`: seeder for the initial configuration (default=`PNNS()`). It can be a seeder from
+  `KMSeed` or a `Matrix{Float64}`. If it's a matrix, it represents the initial centroids (by column).
+  See the documentation for `KMSeed` for a list of available seeding algorithms and their
   options.
 * `tol`: a `Float64`, relative tolerance for detecting convergence (default=1e-5).
 * `verbose`: a `Bool`; if `true` (the default) it prints information on screen.
@@ -210,7 +207,7 @@ function kmeans(
         data::Matrix{Float64}, k::Integer;
         max_it::Integer = 1000,
         seed::Union{Integer,Nothing} = nothing,
-        kmseeder::Union{KMeansSeeder,Matrix{Float64}} = KMPNNS(),
+        kmseeder::Union{Seeder,Matrix{Float64}} = PNNS(),
         verbose::Bool = true,
         tol::Float64 = 1e-5,
         accel::Type{<:Accelerator} = ReducedComparison,
@@ -241,7 +238,7 @@ function kmeans(
 
     mdata = KMMatrix(data)
 
-    if kmseeder isa KMeansSeeder
+    if kmseeder isa Seeder
         config = init_centroids(kmseeder, mdata, k, accel)
     else
         size(kmseeder) == (m, k) || throw(ArgumentError("Incompatible kmseeder and data dimensions, data=$((m,k)) kmseeder=$(size(kmseeder))"))
