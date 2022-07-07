@@ -37,7 +37,7 @@ function init_centroids(S::Refine{S0}, data::Mat64, k::Int, A::Type{<:Accelerato
                 rdata = KMMatrix(data.dmat[:,split .== a])
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = inner_init(S, rdata, k, A)
-                lloyd!(config, rdata, 1_000, 1e-4, false)
+                lloyd!(config, rdata, 1_000, 0.0, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end
@@ -50,7 +50,7 @@ function init_centroids(S::Refine{S0}, data::Mat64, k::Int, A::Type{<:Accelerato
             for a = 1:J
                 config = Configuration{A}(pool, configs[a].centroids)
                 DataLogging.@push_prefix! "SPLIT=$a"
-                lloyd!(config, pool, 1_000, 1e-4, false)
+                lloyd!(config, pool, 1_000, 0.0, false)
                 DataLogging.@pop_prefix!
                 configs[a] = config
             end

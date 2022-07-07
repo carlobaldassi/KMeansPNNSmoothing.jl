@@ -136,15 +136,16 @@ function lloyd!(
         num_chgd = partition_from_centroids!(config, data, w)
         new_cost = config.cost
         synched = false
-        if tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty
+        tol_converged = tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty
+        if tol_converged
             old_new_cost = new_cost
             sync_costs!(config, data, w)
             new_cost = config.cost
-            # println(" > syncing $old_new_cost -> $new_cost")
             synched = (new_cost ≠ old_new_cost)
+            tol_converged = new_cost ≥ old_cost * (1 - tol)
         end
         DataLogging.@log "it: $it cost: $(config.cost) num_chgd: $(num_chgd)$(found_empty ? " [found_empty]" : "")$(synched ? " [synched]" : "")"
-        if num_chgd == 0 || (tol > 0 && new_cost ≥ old_cost * (1 - tol) && !found_empty && !synched)
+        if num_chgd == 0 || (tol_converged && !synched)
             if !synched
                 old_new_cost = new_cost
                 sync_costs!(config, data, w)
@@ -203,7 +204,7 @@ The keyword arguments are:
 * `accel`: the acceleration method for Lloyd's algorithm (default=`KMAccel.ReducedComparison`).
   See the documentation for [`KMAccel`](@ref) for a list of available methods; note that here you have to
   pass the type, not an object.
-* `tol`: a `Float64`, relative tolerance for detecting convergence (default=1e-5).
+* `tol`: a `Float64`, relative tolerance for detecting convergence (default=0.0).
 * `verbose`: a `Bool`; if `true` (the default) it prints information on screen.
 """
 function kmeans(
@@ -212,7 +213,7 @@ function kmeans(
         seed::Union{Integer,Nothing} = nothing,
         kmseeder::Union{Seeder,Matrix{Float64}} = PNNS(),
         verbose::Bool = true,
-        tol::Float64 = 1e-5,
+        tol::Float64 = 0.0,
         accel::Type{<:Accelerator} = ReducedComparison,
         logfile::AbstractString = "",
     )
