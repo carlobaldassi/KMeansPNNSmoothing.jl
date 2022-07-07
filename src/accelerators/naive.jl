@@ -1,3 +1,12 @@
+"""
+   Naive
+
+This is the standard alternated optimization method; at each step
+everything is recomputed from scratch. It is inefficient and only
+provided for reference.
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref).
+"""
 struct Naive <: Accelerator
     config::Configuration{Naive}
     Naive(config::Configuration{Naive}) = new(config)

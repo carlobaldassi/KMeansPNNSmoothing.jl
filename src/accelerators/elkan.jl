@@ -1,3 +1,16 @@
+"""
+  SElk
+
+The "simplified Elkan" method as described in Newling and Fleuret (PMLR 2016),
+which is a simplified version of the method by Elkan (ICML 2003). Ofen outperformed
+by [`RElk`](@ref).
+
+Note: during kmeans iteration with the `verbose` option, the intermediate costs that
+get printed when using this method are not accurate unless "[synched]" is printed too
+(the output cost is always correct though).
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`RElk`](@ref).
+"""
 struct SElk <: Accelerator
     config::Configuration{SElk}
     δc::Vector{Float64}
@@ -189,6 +202,15 @@ function centroids_from_partition!(config::Configuration{SElk}, data::Mat64, w::
 end
 
 
+"""
+  RElk
+
+The "reduced-comparison simplified Elkan" method. This is the same as [`SElk`](@ref) except that it
+doesn't use the upper bound, but it compensates by using the same technique as in [`ReducedComparison`](@ref),
+often resulting in a better or equal performance.
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`SElk`](@ref), [`ReducedComparison`](@ref).
+"""
 struct RElk <: Accelerator
     config::Configuration{RElk}
     δc::Vector{Float64}

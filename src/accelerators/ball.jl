@@ -1,3 +1,10 @@
+"""
+   Ball
+
+The "ball k-means" method by Xia et al. (TPAMI 2020).
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref).
+"""
 struct Ball <: Accelerator
     config::Configuration{Ball}
     δc::Vector{Float64}

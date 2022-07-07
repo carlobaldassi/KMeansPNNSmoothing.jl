@@ -196,10 +196,13 @@ The keyword arguments are:
   points.
 * `seed`: random seed, either an integer or `nothing` (this is the default, it means no seeding
   is performed).
-* `kmseeder`: seeder for the initial configuration (default=`PNNS()`). It can be a seeder from
+* `kmseeder`: seeder for the initial configuration (default=`KMSeed.PNNS()`). It can be a seeder from
   `KMSeed` or a `Matrix{Float64}`. If it's a matrix, it represents the initial centroids (by column).
-  See the documentation for `KMSeed` for a list of available seeding algorithms and their
+  See the documentation for [`KMSeed`](@ref) for a list of available seeding algorithms and their
   options.
+* `accel`: the acceleration method for Lloyd's algorithm (default=`KMAccel.ReducedComparison`).
+  See the documentation for [`KMAccel`](@ref) for a list of available methods; note that here you have to
+  pass the type, not an object.
 * `tol`: a `Float64`, relative tolerance for detecting convergence (default=1e-5).
 * `verbose`: a `Bool`; if `true` (the default) it prints information on screen.
 """

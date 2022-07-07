@@ -1,3 +1,15 @@
+"""
+  Hamerly
+
+The "simplified Hamerly" method as described in Newling and Fleuret (PMLR 2016),
+which is a simplified version of the method by Hamerly (SDM 2010).
+
+Note: during kmeans iteration with the `verbose` option, the intermediate costs that
+get printed when using this method are not accurate unless "[synched]" is printed too
+(the output cost is always correct though).
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`SHam`](@ref).
+"""
 struct Hamerly <: Accelerator
     config::Configuration{Hamerly}
     δc::Vector{Float64}
@@ -179,6 +191,16 @@ function centroids_from_partition!(config::Configuration{Hamerly}, data::Mat64, 
 end
 
 
+"""
+  SHam
+
+Same as [`Hamerly`](@ref) but without the upper bound condition. It is often slightly worse and
+provided mostly for reference. Its only tiny advantage is that the intermediate costs are always
+accurate.
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`Hamerly`](@ref).
+
+"""
 struct SHam <: Accelerator
     config::Configuration{SHam}
     δc::Vector{Float64}

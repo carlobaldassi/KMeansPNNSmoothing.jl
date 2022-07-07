@@ -1,3 +1,11 @@
+"""
+   ReducedComparison
+
+The method from Kaukoranta et al. (Proceedings of DCC 1999). Better than
+[`Naive`](@ref), but often worse than alternative accelerators.
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref).
+"""
 struct ReducedComparison <: Accelerator
     config::Configuration{ReducedComparison}
     active::BitVector

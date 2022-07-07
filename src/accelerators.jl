@@ -55,7 +55,7 @@ end
 @include_accel "naive.jl"
 @include_accel "reduced_comparison.jl"
 @include_accel "hamerly.jl"
-@include_accel "elk.jl"
+@include_accel "elkan.jl"
 @include_accel "exponion.jl"
 @include_accel "yinyang.jl"
 @include_accel "ball.jl"
@@ -63,6 +63,20 @@ end
 ## Create a module to contain just the accelerators
 ## to serve as a namespace that we can export
 
+"""
+The `KMAccel` module contains subtypes of `Accelerator` that can be passed
+to [`kmeans`](@ref) to specify the method used to accelerate Lloyd's algorithm.
+
+* [`Naive`](@ref): the standard method (only for reference, should be avoided)
+* [`ReducedComparison`](@ref): method by Kaukoranta et al. (1999)
+* [`Hamerly`](@ref) and [`SHam`](@ref): methods based on Hamerly (2010)
+* [`SElk`](@ref) and [`RElk`](@ref): methods based on Elkan (2003)
+* [`Exponion`](@ref): method from Newling and Fleuret (2016)
+* [`Yinyang`](@ref) and [`Ryy`](@ref): methods based on Ding et al. (2015)
+* [`Ball`](@ref): method from Xia et al. (2018)
+
+See the documentation of each type for details.
+"""
 module KMAccel
 
 import ..Naive,

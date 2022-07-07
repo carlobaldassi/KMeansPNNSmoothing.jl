@@ -1,6 +1,17 @@
-include(joinpath(".." , "Annuli.jl"))
+include("Annuli.jl")
 using .Annuli
 
+"""
+  Exponion
+
+The exponion method as described in Newling and Fleuret (PMLR 2016).
+
+Note: during kmeans iteration with the `verbose` option, the intermediate costs that
+get printed when using this method are not accurate unless "[synched]" is printed too
+(the output cost is always correct though).
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref).
+"""
 struct Exponion <: Accelerator
     config::Configuration{Exponion}
     G::Int

@@ -19,6 +19,16 @@ with several seeding options:
 * the PNN-smoothing meta-method
 * the [refine][refine] meta-method
 
+It also implements a number of different techniques that can accelerate the iterations
+of Lloyd's algorithm:
+* the naive standard one (no acceleration)
+* the "reduced comparison" method from [this paper][reduced_comparison]
+* methods based on [Hamerly 2010][hamerly]
+* methods based on [Elkan 2003][elkan]
+* variants of the "yinyang" method from [this paper][yinyang]
+* the "exponion" method from [this paper][exponion]
+* the "ball" method from [this paper][ball]
+
 The package also provides two functions to compute the centroid index as defined in [this paper][CI],
 an asymmetric one called `CI` and a symmetric one called `CI_sym`. These are not exported.
 
@@ -63,8 +73,9 @@ example the `runfile.jl` script in the `test` directory.)
 
 Here is an example run, assuming we want to cluster a `data` matrix into `k` clusters with
 the original kmeans++ algorithm (the `{1}` type parameter deactivates the "greedy" version)
+and using the "reduced yinyang" acceleration method:
 ```julia
-result = kmeans(data, k; kmseeder=KMSeed.PlusPlus{1}())
+result = kmeans(data, k; kmseeder=KMSeed.PlusPlus{1}(), accel=KMAccel.Ryy)
 ```
 and here is an example running the PNN-smoothing scheme, using the non-greedy kmeans++ to
 seed the initial sub-sets (this is actually the default if no keyword arguments are
@@ -78,7 +89,7 @@ result = kmeans(data, k; kmseeder=KMSeed.PNNS(KMSeed.MaxMin(), rlevel=2))
 ```
 
 For the complete documentation you can use the Julia help (press the <kbd>?</kbd> key in
-the REPL, then type `kmeans`, or `KMSeed`)
+the REPL, then type `kmeans`, or `KMSeed` or `KMAccel`)
 
 All codes are parallellized (in most cases over the data points) if there are threads
 available: either run Julia with the `-t` option or use the `JULIA_NUM_THREADS` environment
@@ -102,3 +113,10 @@ licence information there.
 [CI]: https://www.sciencedirect.com/science/article/abs/pii/S0031320314001150
 [VI]: https://www.sciencedirect.com/science/article/pii/S0047259X06002016?via%3Dihub
 [reckmeans_repo]: https://github.com/carlobaldassi/RecombinatorKMeans.jl
+[reduced_comparison]: https://doi.org/10.1109/TPAMI.2020.3008694
+[hamerly]: https://doi.org/10.1137/1.9781611972801.12
+[elkan]: https://www.aaai.org/Papers/ICML/2003/ICML03-022.pdf
+[yinyang]: https://proceedings.mlr.press/v37/ding15.html
+[exponion]: https://proceedings.mlr.press/v48/newling16.html
+[ball]: https://doi.org/10.1109/TPAMI.2020.3008694
+

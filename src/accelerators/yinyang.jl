@@ -33,6 +33,20 @@ function cluster_centroids!(centroids::Mat64, G::Int)
     return groups
 end
 
+
+"""
+  Yinyang
+
+The "simplified yinyang" method as described in Newling and Fleuret (PMLR 2016),
+which is a simplified version of the method by Ding et al. (ICML 2015). Ofen outperformed
+by [`Ryy`](@ref).
+
+Note: during kmeans iteration with the `verbose` option, the intermediate costs that
+get printed when using this method are not accurate unless "[synched]" is printed too
+(the output cost is always correct though).
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`Ryy`](@ref).
+"""
 struct Yinyang <: Accelerator
     config::Configuration{Yinyang}
     G::Int
@@ -308,6 +322,15 @@ function centroids_from_partition!(config::Configuration{Yinyang}, data::Mat64, 
 end
 
 
+"""
+  Ryy
+
+The "reduced-comparison simplified yinyang" method. This is the same as [`Yinyang`](@ref) except that it
+doesn't use the upper bound, but it compensates by using the same technique as in [`ReducedComparison`](@ref),
+often resulting in a better or equal performance.
+
+See also: [`kmeans`](@ref), [`KMAccel`](@ref), [`Yinyang`](@ref), [`ReducedComparison`](@ref).
+"""
 struct Ryy <: Accelerator
     config::Configuration{Ryy}
     G::Int
