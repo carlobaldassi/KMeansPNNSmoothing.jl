@@ -80,6 +80,7 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
     m, n = size(data)
     J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
     @assert J * k ≤ n
+    S0 == _Self && @assert J > 1
     # (J == 1 || J == n ÷ k) && @warn "edge case: J = $J"
     DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
 
