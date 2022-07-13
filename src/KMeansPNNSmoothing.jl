@@ -216,6 +216,7 @@ function kmeans(
         tol::Float64 = 0.0,
         accel::Type{<:Accelerator} = ReducedComparison,
         logfile::AbstractString = "",
+        _clear_cache::Bool = true,
     )
 
     logger = if !isempty(logfile)
@@ -260,7 +261,7 @@ function kmeans(
 
     exit_status = converged ? :converged : :maxiters
 
-    Cache.clear!()
+    _clear_cache && Cache.clear!()
 
     return Results(exit_status, config)
 end
