@@ -137,7 +137,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -192,7 +192,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             # @assert 1 ≤ ci ≤ k
             # @assert 1 ≤ fi ≤ G
@@ -424,7 +424,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         costsij = costsij_th[Threads.threadid()]
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
@@ -481,7 +481,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             fi = gind[i]

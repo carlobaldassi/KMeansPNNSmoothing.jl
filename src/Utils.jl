@@ -6,12 +6,31 @@ using ..Cache
 
 export KMMatrix, Mat64, update_quads!,
        Θ, √̂,
+       @bthreads,
        _cost, _costs_1_vs_all!, _costs_1_vs_range!, _cost_1_vs_1,
        compute_costs_one!, compute_costs_one, update_costs_one!,
        findmin_and_2ndmin,
        _sum_clustered_data!, _update_centroids_δc!
 
 import Base: size, copy, copy!, convert, view, maybeview
+
+macro bthreads(ex)
+    @assert ex.head == :for
+    loop = ex.args[1]
+    @assert loop.head == :(=)
+    loop = Expr(:(=), esc.(loop.args)...)
+    ex = Expr(:for, loop, esc.(ex.args[2:end])...)
+    quote
+        old_num_thr = BLAS.get_num_threads()
+        new_num_thr = Threads.nthreads() > 1 ? 1 : old_num_thr
+        new_num_thr ≠ old_num_thr && BLAS.set_num_threads(new_num_thr)
+        try
+            Threads.@threads $ex
+        finally
+            new_num_thr ≠ old_num_thr && BLAS.set_num_threads(old_num_thr)
+        end
+    end
+end
 
 const ColView{T} = SubArray{T, 1, Matrix{T}, Tuple{Base.Slice{Base.OneTo{Int64}}, Int64}, true}
 
@@ -136,7 +155,7 @@ function compute_costs_one!(costs::Vector{Float64}, data::Mat64, x::AbstractVect
     @assert length(costs) == n
     @assert length(x) == m
 
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds costs[i] = _cost(@view(data[:,i]), x)
     end
     return costs
@@ -148,7 +167,7 @@ function compute_costs_one!(costs::Vector{Float64}, data::Mat64, x::AbstractVect
     @assert length(x) == m
     @assert length(w) == n
 
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds costs[i] = w[i] * _cost(@view(data[:,i]), x)
     end
     return costs
@@ -161,7 +180,7 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
     @assert length(c) == n
     @assert length(x) == m
 
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds begin
             old_v = costs[i]
             new_v = _cost(@view(data[:,i]), x)
@@ -180,7 +199,7 @@ function update_costs_one!(costs::Vector{Float64}, c::Vector{Int}, j::Int, data:
     @assert length(c) == n
     @assert length(x) == m
 
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds begin
             old_v = costs[i]
             new_v = w[i] * _cost(@view(data[:,i]), x)
@@ -216,7 +235,7 @@ function _sum_clustered_data!(new_centroids, data, c, stable)
     n = size(data, 2)
     new_centroids_thr = Cache.new_centroids_thr(m, k)
     foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds begin
             j = c[i]
             stable[j] && continue
@@ -246,7 +265,7 @@ function _sum_clustered_data!(new_centroids, zs, data, c, stable, w)
 
     foreach(nc_thr->fill!(nc_thr, 0.0), new_centroids_thr)
     foreach(z->fill!(z, 0.0), zs_thr)
-    Threads.@threads for i = 1:n
+    @bthreads for i = 1:n
         @inbounds begin
             j = c[i]
             wi = w ≡ nothing ? 1 : w[i]

@@ -27,7 +27,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Naive}, da
     num_chgd_th = zeros(Int, Threads.nthreads())
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             costsij = costsij_th[Threads.threadid()]

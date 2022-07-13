@@ -60,7 +60,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ball}, dat
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -100,7 +100,7 @@ function partition_from_centroids!(config::Configuration{Ball}, data::Mat64, w::
     num_chgd = 0
     lk = Threads.SpinLock()
     lk2 = ReentrantLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             nstable[ci] && continue
@@ -173,7 +173,7 @@ function centroids_from_partition!(config::Configuration{Ball}, data::Mat64, w::
 
     r[.~stable] .= 0.0
     lk = Threads.SpinLock()
-    @inbounds Threads.@threads for i = 1:n
+    @inbounds @bthreads for i = 1:n
         j = c[i]
         stable[j] && continue
         # r[j] = max(r[j], @views 2 * √̂(_cost(centroids[:,j], data[:,i])))

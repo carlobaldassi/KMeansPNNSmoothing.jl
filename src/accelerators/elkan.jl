@@ -54,7 +54,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -92,7 +92,7 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             ubi = ub[i]
@@ -151,7 +151,7 @@ function sync_costs!(config::Configuration{SElk}, data::Mat64, w::Union{Vector{<
     w ≡ nothing || error("w unsupported with SElk accelerator method")
 
     DataLogging.@push_prefix! "SYNC"
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
@@ -254,7 +254,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -296,7 +296,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             datai = @view data[:,i]

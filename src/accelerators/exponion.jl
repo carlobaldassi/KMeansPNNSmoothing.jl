@@ -81,7 +81,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Exponion},
 
     costsij_th = [zeros(k) for th = 1:Threads.nthreads()]
 
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -119,7 +119,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
     num_chgd = 0
     fill!(stable, true)
     lk = Threads.SpinLock()
-    t = @elapsed Threads.@threads for i in 1:n
+    t = @elapsed @bthreads for i in 1:n
         @inbounds begin
             ci = c[i]
             lbi, ubi = lb[i], ub[i]

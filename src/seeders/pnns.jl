@@ -90,7 +90,7 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
             split = gen_fair_splits(n, J)
             # @assert all(sum(split .== a) ≥ k for a = 1:J)
             configs = Vector{Configuration{A}}(undef, J)
-            Threads.@threads for a = 1:J
+            @bthreads for a = 1:J
                 rdata = KMMatrix(data.dmat[:,split .== a])
                 DataLogging.@push_prefix! "SPLIT=$a"
                 config = inner_init(S, rdata, k, A)

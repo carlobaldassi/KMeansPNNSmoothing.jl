@@ -40,7 +40,7 @@ function init_centroids(S::Scala, data::Mat64, k::Int, A::Type{<:Accelerator}; k
             add_inds = findall(rand(n) .< w)
             add_k = length(add_inds)
             add_centr = data.dmat[:,add_inds]
-            Threads.@threads for i in 1:n
+            @bthreads for i in 1:n
                 @inbounds begin
                     v, x = costs[i], c[i]
                     for j in 1:add_k
