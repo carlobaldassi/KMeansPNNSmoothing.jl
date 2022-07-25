@@ -1,18 +1,27 @@
 Base.@propagate_inbounds function _merge_cost(centroids::AbstractMatrix{<:Float64}, z::Int, z′::Int, j::Int, j′::Int)
-    return @views (z * z′) / (z + z′) * _cost(centroids[:,j], centroids[:,j′])
+    return @views _merge_cost(centroids[:,j], centroids[:,j′], z, z′)
+end
+
+Base.@propagate_inbounds function _merge_cost(centr::AbstractVector{Float64}, centr′::AbstractVector{Float64}, z::Int, z′::Int)
+    return _merge_cost(_cost(centr, centr′), z, z′)
+end
+
+Base.@propagate_inbounds function _merge_cost(cost::Float64, z::Int, z′::Int)
+    return (z * z′) / (z + z′) * cost
 end
 
 function _get_nns(vs, j, k, centroids, csizes)
     k < 500 && return _get_nns(j, k, centroids, csizes)
     z = csizes[j]
     fill!(vs, (Inf, 0))
-    @bthreads for j′ = 1:k
+    Threads.@threads for j′ = 1:k
         j′ == j && continue
         @inbounds begin
-            v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
+            z′ = csizes[j′]
+            v′ = _merge_cost(centroids, z, z′, j, j′)
             id = Threads.threadid()
-            if v1 < vs[id][1]
-                vs[id] = v1, j′
+            if v′ < vs[id][1]
+                vs[id] = v′, j′
             end
         end
     end
@@ -31,12 +40,56 @@ function _get_nns(j, k, centroids, csizes)
     @inbounds for j′ = 1:k
         j′ == j && continue
         z′ = csizes[j′]
-        v1 = _merge_cost(centroids, z, csizes[j′], j, j′)
-        if v1 < v
-            v, x = v1, j′
+        v′ = _merge_cost(centroids, z, z′, j, j′)
+        if v′ < v
+            v, x = v′, j′
         end
     end
     return v, x
+end
+
+function _update_nns!(vs, nns_costs, nns, j, k, centroids, csizes)
+    k < 500 && return _update_nns!(nns_costs, nns, j, k, centroids, csizes)
+    z = csizes[j]
+    fill!(vs, (Inf, 0))
+    Threads.@threads for j′ = 1:k
+        j′ == j && continue
+        @inbounds begin
+            z′ = csizes[j′]
+            v′ = _merge_cost(centroids, z, z′, j, j′)
+            id = Threads.threadid()
+            if v′ < vs[id][1]
+                vs[id] = v′, j′
+            end
+            if v′ < nns_costs[j′]
+                nns_costs[j′], nns[j′] = v′, j
+            end
+        end
+    end
+    v, x = Inf, 0
+    for id in 1:Threads.nthreads()
+        if vs[id][1] < v
+            v, x = vs[id]
+        end
+    end
+    nns_costs[j], nns[j] = v, x
+end
+
+function _update_nns!(nns_costs, nns, j, k, centroids, csizes)
+    z = csizes[j]
+    v, x = Inf, 0
+    @inbounds for j′ = 1:k
+        j′ == j && continue
+        z′ = csizes[j′]
+        v′ = _merge_cost(centroids, z, z′, j, j′)
+        if v′ < v
+            v, x = v′, j′
+        end
+        if v′ < nns_costs[j′]
+            nns_costs[j′], nns[j′] = v′, j
+        end
+    end
+    nns_costs[j], nns[j] = v, x
 end
 
 
@@ -69,6 +122,8 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
         DataLogging.@exec dist_comp += k-1
     end
 
+    to_be_updated = Int[]
+
     t_fuse = @elapsed @inbounds while k > tgt_k
         jm = argmin(@view(nns_costs[1:k]))
         js = nns[jm]
@@ -83,6 +138,13 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
         for l = 1:m
             cmat[l,jm] = (zm * cmat[l,jm] + zs * cmat[l,js]) / (zm + zs)
             cmat[l,js] = cmat[l,k]
+        end
+
+        if k-1 == tgt_k
+            # we're done, skip the last update
+            k -= 1
+            DataLogging.@pop_prefix!
+            break
         end
 
         # update csizes
@@ -108,31 +170,30 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
         nns_costs[js] = nns_costs[k]
         nns_costs[k] = Inf
 
-        num_fullupdates = 0
+        # We need to keep track of which clusters used to point at jm or js
+        # before we update the ones that pointed to k (now that cluster k
+        # will become js)
+        empty!(to_be_updated)
         for j = 1:(k-1)
-            # 1) merged cluster jm, or clusters which used to point to either jm or js
-            #    perform a full update
-            if j == jm || nns[j] == jm || nns[j] == js
-                num_fullupdates += 1
-                nns_costs[j], nns[j] = _get_nns(vs, j, k-1, cmat, csizes)
-                DataLogging.@exec dist_comp += k-2
-            # 2) clusters that did not point to jm or js
-            #    only compare the old cost with the cost for the updated cluster
-            else
-                z = csizes[j]
-                # note: what used to point at k now must point at js
-                v, x = nns_costs[j], (nns[j] ≠ k ? nns[j] : js)
-                j′ = jm
-                z′ = csizes[j′]
-                v′ = _merge_cost(cmat, z, z′, j, j′)
-                DataLogging.@exec dist_comp += 1
-                if v′ < v
-                    v, x = v′, j′
-                end
-                nns_costs[j], nns[j] = v, x
-                @assert nns[j] ≠ j
-            end
+            j == jm && continue
+            j′ = nns[j]
+            (j′ == jm || j′ == js) && push!(to_be_updated, j)
+            j′ == k && (nns[j] = js)
         end
+
+        # This performs a full update of the merged cluster jm
+        # We also use the cost computations to update the min costs
+        # of the other j′ in case neither jm nor js were their nearest neighbor
+        # but now they are
+        _update_nns!(vs, nns_costs, nns, jm, k-1, cmat, csizes)
+
+        # Clusters which used to point at jm or js need to undergo a full update
+        for j in to_be_updated
+            nns_costs[j], nns[j] = _get_nns(vs, j, k-1, cmat, csizes)
+        end
+        num_fullupdates = 1 + length(to_be_updated)
+        DataLogging.@exec dist_comp += num_fullupdates * (k-2)
+
         DataLogging.@log "fullupdates: $num_fullupdates"
         DataLogging.@pop_prefix!
 
