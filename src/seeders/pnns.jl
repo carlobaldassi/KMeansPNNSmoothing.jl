@@ -2,7 +2,7 @@ struct _Self <: Seeder
 end
 
 """
-    PNNS(init0=PlusPlus{1}(); ρ=0.5, rlevel=1)
+    PNNS(init0=PlusPlus{1}(); ρ=1.0, rlevel=1)
 
 The seeder for the PNN-smoothing algorithm. The first argument `init0` can be any
 other seeder. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
@@ -17,7 +17,7 @@ struct PNNS{S<:Seeder} <: MetaSeeder{S}
     init0::S
     ρ::Float64
 end
-function PNNS(init0::S = PlusPlus{1}(); ρ = 0.5, rlevel::Int = 1) where {S <: Seeder}
+function PNNS(init0::S = PlusPlus{1}(); ρ = 1.0, rlevel::Int = 1) where {S <: Seeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
@@ -29,18 +29,20 @@ end
 const PNNSR = PNNS{_Self}
 
 """
-    PNNSR(;ρ=0.5)
+    PNNSR(;ρ=1.0)
 
 The fully-recursive version of the `PNNS` seeder. It keeps splitting the dataset until the
 number of points is ``≤2k``, at which point it uses `PNN`. The `ρ` option is documented in `PNNS`.
 """
-PNNSR(;ρ = 0.5) = PNNS{_Self}(_Self(), ρ)
+PNNSR(;ρ = 1.0) = PNNS{_Self}(_Self(), ρ)
 
 
+getJ(n, k, ρ) = clamp(ceil(Int, √(ρ * n / 2k)), 1, n ÷ k)
 
 function inner_init(S::PNNSR, data::Mat64, k::Int, A::Type{<:Accelerator})
+    @extract S : ρ
     m, n = size(data)
-    if n ≤ 2k
+    if getJ(n, k, ρ) == 1
         return init_centroids(PNN(), data, k, A)
     else
         return init_centroids(S, data, k, A)
@@ -78,9 +80,9 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
     @extract S : ρ
     DataLogging.@push_prefix! "INIT_METANN"
     m, n = size(data)
-    J = clamp(ceil(Int, √(ρ * n / k)), 1, n ÷ k)
+    J = getJ(n, k, ρ)
     @assert J * k ≤ n
-    S0 == _Self && @assert J > 1
+    S0 == _Self && J ≤ 1 && error("The PNNSR seeder requires that ρ * n > 2k, given ρ=$ρ n=$n k=$k")
     # (J == 1 || J == n ÷ k) && @warn "edge case: J = $J"
     DataLogging.@log "INPUTS m: $m n: $n k: $k J: $J"
 
