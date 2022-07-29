@@ -20,15 +20,18 @@ macro bthreads(ex)
     @assert loop.head == :(=)
     loop = Expr(:(=), esc.(loop.args)...)
     ex = Expr(:for, loop, esc.(ex.args[2:end])...)
-    quote
-        old_num_thr = BLAS.get_num_threads()
-        new_num_thr = Threads.nthreads() > 1 ? 1 : old_num_thr
-        new_num_thr ≠ old_num_thr && BLAS.set_num_threads(new_num_thr)
-        try
-            Threads.@threads $ex
-        finally
-            new_num_thr ≠ old_num_thr && BLAS.set_num_threads(old_num_thr)
+    if Threads.nthreads() > 1
+        return quote
+            old_num_thr = BLAS.get_num_threads()
+            old_num_thr ≠ 1 && BLAS.set_num_threads(1)
+            try
+                Threads.@threads $ex
+            finally
+                old_num_thr ≠ 1 && BLAS.set_num_threads(old_num_thr)
+            end
         end
+    else
+        return ex
     end
 end
 
