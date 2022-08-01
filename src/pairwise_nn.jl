@@ -10,6 +10,21 @@ Base.@propagate_inbounds function _merge_cost(cost::Float64, z::Int, z′::Int)
     return (z * z′) / (z + z′) * cost
 end
 
+function _get_all_nns(centroids::Matrix{Float64}, csizes::Vector{Int})
+    nt = Threads.nthreads()
+    k = length(csizes)
+    @assert size(centroids, 2) == k
+    (nt == 1 || k < 500) && return _get_all_nns_nothreads(centroids, csizes)
+    vs = Threads.resize_nthreads!(Tuple{Float64,Int}[], (Inf, 0))
+    nns = zeros(Int, k)
+    nns_costs = fill(Inf, k)
+    @inbounds for j = 1:k
+        nns_costs[j], nns[j] = _get_nns(vs, j, k, centroids, csizes)
+        DataLogging.@exec dist_comp += k-1
+    end
+    return nns, nns_costs
+end
+
 function _get_nns(vs, j, k, centroids, csizes)
     k < 500 && return _get_nns(j, k, centroids, csizes)
     z = csizes[j]
@@ -49,7 +64,8 @@ function _get_nns(j, k, centroids, csizes)
 end
 
 function _update_nns!(vs, nns_costs, nns, j, k, centroids, csizes)
-    k < 500 && return _update_nns!(nns_costs, nns, j, k, centroids, csizes)
+    nt = Threads.nthreads()
+    (nt == 1 || k < 500) && return _update_nns!(nns_costs, nns, j, k, centroids, csizes)
     z = csizes[j]
     fill!(vs, (Inf, 0))
     Threads.@threads for j′ = 1:k
@@ -67,7 +83,7 @@ function _update_nns!(vs, nns_costs, nns, j, k, centroids, csizes)
         end
     end
     v, x = Inf, 0
-    for id in 1:Threads.nthreads()
+    for id in 1:nt
         if vs[id][1] < v
             v, x = vs[id]
         end
@@ -114,13 +130,10 @@ function pairwise_nn(config::Configuration, tgt_k::Int, data::Mat64, ::Type{A}) 
     # end
     # @assert all(csizes′ .> 0)
     # @assert csizes == csizes′
-    nns = zeros(Int, k)
-    nns_costs = fill(Inf, k)
     vs = Threads.resize_nthreads!(Tuple{Float64,Int}[], (Inf, 0))
-    t_costs = @elapsed @inbounds for j = 1:k
-        nns_costs[j], nns[j] = _get_nns(vs, j, k, cmat, csizes)
-        DataLogging.@exec dist_comp += k-1
-    end
+
+    t_costs = @elapsed nns, nns_costs = _get_all_nns(cmat, csizes)
+    DataLogging.@exec dist_comp += (k * (k-1)) ÷ 2
 
     to_be_updated = Int[]
 
