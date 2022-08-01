@@ -8,8 +8,6 @@ using Statistics
 using StatsBase
 using ExtractMacro
 
-using DelimitedFiles
-
 include("DataLogging.jl")
 using .DataLogging
 
