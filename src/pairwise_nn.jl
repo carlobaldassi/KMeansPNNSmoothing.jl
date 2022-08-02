@@ -25,6 +25,26 @@ function _get_all_nns(centroids::Matrix{Float64}, csizes::Vector{Int})
     return nns, nns_costs
 end
 
+function _get_all_nns_nothreads(centroids::Matrix{Float64}, csizes::Vector{Int})
+    k = length(csizes)
+    nns = zeros(Int, k)
+    nns_costs = fill(Inf, k)
+    @inbounds for j = 1:k
+        z = csizes[j]
+        for j′ = 1:(j-1)
+            z′ = csizes[j′]
+            v′ = _merge_cost(centroids, z, z′, j, j′)
+            if v′ < nns_costs[j]
+                nns_costs[j], nns[j] = v′, j′
+            end
+            if v′ < nns_costs[j′]
+                nns_costs[j′], nns[j′] = v′, j
+            end
+        end
+    end
+    return nns, nns_costs
+end
+
 function _get_nns(vs, j, k, centroids, csizes)
     k < 500 && return _get_nns(j, k, centroids, csizes)
     z = csizes[j]
