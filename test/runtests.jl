@@ -106,7 +106,7 @@ end
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
 
-    kmseeder = KMSeed.PNNS(KMSeed.Unif(); rlevel=2)
+    kmseeder = KMSeed.PNNS(KMSeed.Unif(); rlevel=2, ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -126,7 +126,7 @@ end
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
 
-    kmseeder = KMSeed.PNNS(KMSeed.PlusPlus{1}(); rlevel=2)
+    kmseeder = KMSeed.PNNS(KMSeed.PlusPlus{1}(); rlevel=2, ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -138,7 +138,7 @@ end
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
 
-    kmseeder = KMSeed.PNNS(KMSeed.PlusPlus(); rlevel=2)
+    kmseeder = KMSeed.PNNS(KMSeed.PlusPlus(); rlevel=2, ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -152,7 +152,7 @@ end
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
 
-    kmseeder = KMSeed.PNNS(KMSeed.MaxMin(); rlevel=2)
+    kmseeder = KMSeed.PNNS(KMSeed.MaxMin(); rlevel=2, ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -166,7 +166,7 @@ end
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
 
-    kmseeder = KMSeed.PNNS(KMSeed.Scala(); rlevel=2)
+    kmseeder = KMSeed.PNNS(KMSeed.Scala(); rlevel=2, ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -175,6 +175,12 @@ end
 
 @testset "kmeans PNNSR" begin
     kmseeder = KMSeed.PNNSR()
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.PNNSR(ρ=2.0)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -201,6 +207,18 @@ end
 
 @testset "kmeans REFINE(MAXMIN)" begin
     kmseeder = KMSeed.Refine(KMSeed.MaxMin())
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.Refine(KMSeed.MaxMin(), J=20)
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.Refine(KMSeed.MaxMin(), rlevel=2)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
