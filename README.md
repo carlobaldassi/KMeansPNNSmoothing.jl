@@ -1,8 +1,8 @@
 # KMeansPNNSmoothing.jl
 
 This code implements the PNN-smoothing seeding method for k-means described in the paper
-*"Systematically improving existing k-means initialization algorithms
-at nearly no cost, by pairwise-nearest-neighbor smoothing"* by C. Baldassi,
+*"Systematically and efficiently improving existing k-means initialization algorithms
+by pairwise-nearest-neighbor smoothing"* by C. Baldassi,
 submitted for publication, (2022) [arXiv][pnns_paper].
 
 The code is written in [Julia]. It requires Julia 1.6 or later.
