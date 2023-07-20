@@ -2,13 +2,19 @@ struct _Self <: Seeder
 end
 
 """
-    PNNS(init0=PlusPlus{1}(); ρ=1.0, rlevel=1, max_it=typemax(Int))
+    PNNS(init0=PlusPlus{1}(); ρ=1.0, rlevel=1, max_it=typemax(Int), accel=:auto)
 
 The seeder for the PNN-smoothing algorithm. The first argument `init0` can be any
 other seeder. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / 2k)⌉``
 where ``N`` is the number of data points and ``k`` the number of clusters, but the result is
 clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level.
 The argument `max_it` sets the maximum number of Lloyd iterations used when optimizing the sub-sets.
+The `accel` keyword argument determines what accelerator mathod should be used for the PNN procedure.
+Available methods are:
+* `:FK` the method by Franti and Kaurokanta (1998)
+* `:tri` a method that exploits the triangle inequality (unpublished)
+Using `:auto` will select the first method for problems with fewer than 100 dimensions and
+the second one otherwise.
 
 See `PNNSR` for the fully-recursive version.
 
@@ -18,12 +24,15 @@ struct PNNS{S<:Seeder} <: MetaSeeder{S}
     init0::S
     ρ::Float64
     max_it::Int
+    accel::Symbol
 end
-function PNNS(init0::S = PlusPlus{1}(); ρ = 1.0, max_it = typemax(Int), rlevel::Int = 1) where {S <: Seeder}
+function PNNS(init0::S = PlusPlus{1}(); ρ = 1.0, max_it = typemax(Int), rlevel::Int = 1, accel::Symbol = :auto) where {S <: Seeder}
     @assert rlevel ≥ 1
+    allowed_accels = [:auto, :FK, :tri]
+    accel ∈ allowed_accels || throw(ArgumentError("accel must be one of $allowed_accels"))
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = PNNS{typeof(kmseeder)}(kmseeder, ρ, max_it)
+        kmseeder = PNNS{typeof(kmseeder)}(kmseeder, ρ, max_it, accel)
     end
     return kmseeder
 end
@@ -31,22 +40,22 @@ end
 const PNNSR = PNNS{_Self}
 
 """
-    PNNSR(;ρ=1.0, max_it=typemax(Int))
+    PNNSR(;ρ=1.0, max_it=typemax(Int), accel=:auto)
 
 The fully-recursive version of the `PNNS` seeder. It keeps splitting the dataset until the
-number of points is ``≤2k``, at which point it uses `PNN`. The `ρ` and `max_it` options
-are documented in `PNNS`.
+number of points is ``≤2k``, at which point it uses `PNN`. The keyword arguments are
+documented in `PNNS`.
 """
-PNNSR(;ρ = 1.0, max_it = typemax(Int)) = PNNS{_Self}(_Self(), ρ, max_it)
+PNNSR(;ρ = 1.0, max_it = typemax(Int), accel = :auto) = PNNS{_Self}(_Self(), ρ, max_it, accel)
 
 
 getJ(n, k, ρ) = clamp(ceil(Int, √(ρ * n / 2k)), 1, n ÷ k)
 
 function inner_init(S::PNNSR, data::Mat64, k::Int, A::Type{<:Accelerator})
-    @extract S : ρ
+    @extract S : ρ accel
     m, n = size(data)
     if getJ(n, k, ρ) == 1
-        return init_centroids(PNN(), data, k, A)
+        return init_centroids(PNN(;accel), data, k, A)
     else
         return init_centroids(S, data, k, A)
     end
@@ -80,7 +89,7 @@ function gen_random_splits_quickndirty(n, J, k)
 end
 
 function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
-    @extract S : ρ max_it
+    @extract S : ρ max_it accel
     m, n = size(data)
     J = getJ(n, k, ρ)
     @assert J * k ≤ n
@@ -108,9 +117,14 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
         c_new[i] = configs[a].c[inds[a]] + k * (a-1)
         costs_new[i] = configs[a].costs[inds[a]]
     end
+
+    accel == :auto && (accel = m < 100 ? :FK : :tri)
+    pnn =
+        accel == :FK ? pairwise_nn :
+        accel == :tri ? pairwise_nn_savedist :
+        error()
+
     jconfig = Configuration{Naive}(data, c_new, costs_new, KMMatrix(centroids_new))
-    mconfig = m < 100 ?
-        pairwise_nn(jconfig, k, data, A) :
-        pairwise_nn_savedist(jconfig, k, data, A)
+    mconfig = pnn(jconfig, k, data, A)
     return mconfig
 end

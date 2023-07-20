@@ -88,6 +88,12 @@ end
     @test checkresult(result)
     @test 6.7 < result.cost < 11
     checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.PNN(accel=:tri)
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
 end
 
 @testset "kmeans||" begin
@@ -113,6 +119,12 @@ end
     checkaccels(result, kmseeder)
 
     kmseeder = KMSeed.PNNS(KMSeed.Unif(); rlevel=3)
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.PNNS(KMSeed.Unif(); rlevel=3, accel=:tri)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
@@ -181,6 +193,12 @@ end
     checkaccels(result, kmseeder)
 
     kmseeder = KMSeed.PNNSR(ρ=2.0)
+    result = kmeans(a3, k; kmseeder, seed, verbose=false)
+    @test checkresult(result)
+    @test 6.7 < result.cost < 11
+    checkaccels(result, kmseeder)
+
+    kmseeder = KMSeed.PNNSR(accel=:tri)
     result = kmeans(a3, k; kmseeder, seed, verbose=false)
     @test checkresult(result)
     @test 6.7 < result.cost < 11
