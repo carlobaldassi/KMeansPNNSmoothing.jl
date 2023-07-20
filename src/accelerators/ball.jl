@@ -25,9 +25,10 @@ struct Ball <: Accelerator
         nstable = fill(false, k)
         return new(config, δc, r, cdist, neighb, stable, nstable)
     end
-    function Base.copy(accel::Ball)
-        @extract accel : config δc r cdist neighb stable nstable
-        return new(config, copy(δc), copy(r), copy(cdist), copy.(neighb), copy(stable), copy(nstable))
+    function Base.copy(accel::Ball; config::Union{Nothing,Configuration{Ball}} = nothing)
+        @extract accel : δc r cdist neighb stable nstable
+        new_config::Configuration{Ball} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(δc), copy(r), copy(cdist), copy.(neighb), copy(stable), copy(nstable))
     end
 end
 

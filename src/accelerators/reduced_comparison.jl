@@ -17,9 +17,10 @@ struct ReducedComparison <: Accelerator
         stable = falses(k)
         return new(config, active, stable)
     end
-    function Base.copy(accel::ReducedComparison)
-        @extract accel : config active stable
-        return new(config, copy(active), copy(stable))
+    function Base.copy(accel::ReducedComparison; config::Union{Nothing,Configuration{ReducedComparison}} = nothing)
+        @extract accel : active stable
+        new_config::Configuration{ReducedComparison} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(active), copy(stable))
     end
 end
 

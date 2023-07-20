@@ -76,9 +76,10 @@ struct Yinyang <: Accelerator
         groups = cluster_centroids!(centroids, G)
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable)
     end
-    function Base.copy(accel::Yinyang)
-        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable))
+    function Base.copy(accel::Yinyang; config::Union{Nothing,Configuration{Yinyang}} = nothing)
+        @extract accel : δc δcₘ δcₛ jₘ ub groups gind lb stable
+        new_config::Configuration{Yinyang} = config ≡ nothing ? accel.config : config
+        return new(new_config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable))
     end
 
 end
@@ -364,11 +365,11 @@ struct Ryy <: Accelerator
         groups = cluster_centroids!(centroids, G)
         return new(config, G, δc, δcₘ, δcₛ, jₘ, ub, groups, gind, lb, stable, active, gactive)
     end
-    function Base.copy(accel::Ryy)
-        @extract accel : config δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
-        return new(config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable), copy(active), copy(gactive))
+    function Base.copy(accel::Ryy; config::Union{Nothing,Configuration{Ryy}} = nothing)
+        @extract accel : δc δcₘ δcₛ jₘ ub groups gind lb stable active gactive
+        new_config::Configuration{Ryy} = config ≡ nothing ? accel.config : config
+        return new(new_config, G, copy(δc), copy(δcₘ), copy(δcₛ), copy(jₘ), copy(ub), copy(groups), copy(gind), copy(lb), copy(stable), copy(active), copy(gactive))
     end
-
 end
 
 function reset!(accel::Ryy)
