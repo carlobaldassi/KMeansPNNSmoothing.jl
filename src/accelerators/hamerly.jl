@@ -27,9 +27,10 @@ struct Hamerly <: Accelerator
         stable = falses(k)
         return new(config, δc, lb, ub, s, stable)
     end
-    function Base.copy(accel::Hamerly)
-        @extract accel : config δc lb ub s stable
-        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(s), copy(stable))
+    function Base.copy(accel::Hamerly; config::Union{Nothing,Configuration{Hamerly}} = nothing)
+        @extract accel : δc lb ub s stable
+        new_config::Configuration{Hamerly} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(δc), copy(lb), copy(ub), copy(s), copy(stable))
     end
 end
 
@@ -193,9 +194,10 @@ struct SHam <: Accelerator
         stable = falses(k)
         return new(config, δc, lb, s, stable)
     end
-    function Base.copy(accel::SHam)
-        @extract accel : config δc lb s stable
-        return new(accel.config, copy(δc), copy(lb), copy(s), copy(stable))
+    function Base.copy(accel::SHam; config::Union{Nothing,Configuration{SHam}} = nothing)
+        @extract accel : δc lb s stable
+        new_config::Configuration{SHam} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(δc), copy(lb), copy(s), copy(stable))
     end
 end
 

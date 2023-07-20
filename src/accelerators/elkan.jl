@@ -25,9 +25,10 @@ struct SElk <: Accelerator
         stable = falses(k)
         return new(config, δc, lb, ub, stable)
     end
-    function Base.copy(accel::SElk)
-        @extract accel : config δc ls ub stable
-        return new(accel.config, copy(δc), copy(lb), copy(ub), copy(stable))
+    function Base.copy(accel::SElk; config::Union{Nothing,Configuration{SElk}} = nothing)
+        @extract accel : δc ls ub stable
+        new_config::Configuration{SElk} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(δc), copy(lb), copy(ub), copy(stable))
     end
 end
 
@@ -200,9 +201,10 @@ struct RElk <: Accelerator
         stable = falses(k)
         return new(config, δc, lb, active, stable)
     end
-    function Base.copy(accel::RElk)
-        @extract accel : config δc lb active stable
-        return new(accel.config, copy(δc), copy(lb), copy(active), copy(stable))
+    function Base.copy(accel::RElk; config::Union{Nothing,Configuration{RElk}} = nothing)
+        @extract accel : δc lb active stable
+        new_config::Configuration{RElk} = config ≡ nothing ? accel.config : config
+        return new(new_config, copy(δc), copy(lb), copy(active), copy(stable))
     end
 end
 

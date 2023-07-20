@@ -12,7 +12,9 @@ struct Naive <: Accelerator
     Naive(config::Configuration{Naive}) = new(config)
 end
 
-Base.copy(accel::Naive) = accel
+function Base.copy(accel::Naive; config::Union{Nothing,Configuration{Naive}} = nothing)
+    return Naive(config ≡ nothing ? accel.config : config)
+end
 reset!(accel::Naive) = accel
 
 complete_initialization!(config::Configuration{Naive}, data::Mat64) = _complete_initialization_none!(config, data)

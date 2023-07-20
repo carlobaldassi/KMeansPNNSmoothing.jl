@@ -40,9 +40,10 @@ struct Exponion <: Accelerator
         stable = falses(k)
         return new(config, G, δc, lb, ub, cdist, s, ann, stable)
     end
-    function Base.copy(accel::Exponion)
-        @extract accel : config G δc lb ub cdist s ann stable
-        return new(accel.config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(ann), copy(stable))
+    function Base.copy(accel::Exponion; config::Union{Nothing,Configuration{Exponion}} = nothing)
+        @extract accel : G δc lb ub cdist s ann stable
+        new_config::Configuration{Exponion} = config ≡ nothing ? accel.config : config
+        return new(new_config, G, copy(δc), copy(lb), copy(ub), copy(cdist), copy(s), copy(ann), copy(stable))
     end
 end
 

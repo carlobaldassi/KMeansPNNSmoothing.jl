@@ -59,7 +59,9 @@ mutable struct Configuration{A<:Accelerator}
     end
     function copy(config::Configuration{A}) where {A<:Accelerator}
         @extract config : m k n c cost costs centroids csizes accel
-        return new{A}(m, k, n, copy(c), cost, copy(costs), copy(centroids), copy(csizes), copy(accel))
+        new_config = new{A}(m, k, n, copy(c), cost, copy(costs), copy(centroids), copy(csizes))
+        new_config.accel = copy(accel; config=new_config)
+        return new_config
     end
 end
 
