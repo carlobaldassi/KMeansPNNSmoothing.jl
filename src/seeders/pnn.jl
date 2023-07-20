@@ -20,7 +20,9 @@ function init_centroids(::PNN, data::Mat64, k::Int, A::Type{<:Accelerator}; kw..
         c = collect(1:n)
         costs = zeros(n)
         config0 = Configuration{Naive}(data, c, costs, centroids)
-        config = pairwise_nn(config0, k, data, A)
+        config = m < 100 ?
+            pairwise_nn(config0, k, data, A) :
+            pairwise_nn_savedist(config0, k, data, A)
         config
     end
     DataLogging.@log "DONE time: $t cost: $(config.cost)"

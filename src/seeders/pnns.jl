@@ -116,7 +116,9 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
                 costs_new[i] = configs[a].costs[inds[a]]
             end
             jconfig = Configuration{Naive}(data, c_new, costs_new, KMMatrix(centroids_new))
-            mconfig = pairwise_nn(jconfig, k, data, A)
+            mconfig = m < 100 ?
+                pairwise_nn(jconfig, k, data, A) :
+                pairwise_nn_savedist(jconfig, k, data, A)
             mconfig
         end
         DataLogging.@log "NNDONE time: $tnn"
