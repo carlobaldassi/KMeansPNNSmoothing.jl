@@ -2,12 +2,13 @@ struct _Self <: Seeder
 end
 
 """
-    PNNS(init0=PlusPlus{1}(); ρ=1.0, rlevel=1)
+    PNNS(init0=PlusPlus{1}(); ρ=1.0, rlevel=1, max_it=typemax(Int))
 
 The seeder for the PNN-smoothing algorithm. The first argument `init0` can be any
-other seeder. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / k)⌉``
+other seeder. The argument `ρ` sets the number of sub-sets, using the formula ``⌈√(ρ N / 2k)⌉``
 where ``N`` is the number of data points and ``k`` the number of clusters, but the result is
 clamped between `1` and `N÷k`. The argument `rlevel` sets the recursion level.
+The argument `max_it` sets the maximum number of Lloyd iterations used when optimizing the sub-sets.
 
 See `PNNSR` for the fully-recursive version.
 
@@ -16,12 +17,13 @@ See also: `kmeans`, `KMSeed`.
 struct PNNS{S<:Seeder} <: MetaSeeder{S}
     init0::S
     ρ::Float64
+    max_it::Int
 end
-function PNNS(init0::S = PlusPlus{1}(); ρ = 1.0, rlevel::Int = 1) where {S <: Seeder}
+function PNNS(init0::S = PlusPlus{1}(); ρ = 1.0, max_it = typemax(Int), rlevel::Int = 1) where {S <: Seeder}
     @assert rlevel ≥ 1
     kmseeder = init0
     for r = rlevel:-1:1
-        kmseeder = PNNS{typeof(kmseeder)}(kmseeder, ρ)
+        kmseeder = PNNS{typeof(kmseeder)}(kmseeder, ρ, max_it)
     end
     return kmseeder
 end
@@ -29,12 +31,13 @@ end
 const PNNSR = PNNS{_Self}
 
 """
-    PNNSR(;ρ=1.0)
+    PNNSR(;ρ=1.0, max_it=typemax(Int))
 
 The fully-recursive version of the `PNNS` seeder. It keeps splitting the dataset until the
-number of points is ``≤2k``, at which point it uses `PNN`. The `ρ` option is documented in `PNNS`.
+number of points is ``≤2k``, at which point it uses `PNN`. The `ρ` and `max_it` options
+are documented in `PNNS`.
 """
-PNNSR(;ρ = 1.0) = PNNS{_Self}(_Self(), ρ)
+PNNSR(;ρ = 1.0, max_it = typemax(Int)) = PNNS{_Self}(_Self(), ρ, max_it)
 
 
 getJ(n, k, ρ) = clamp(ceil(Int, √(ρ * n / 2k)), 1, n ÷ k)
@@ -77,7 +80,7 @@ function gen_random_splits_quickndirty(n, J, k)
 end
 
 function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}; kw...) where S0
-    @extract S : ρ
+    @extract S : ρ max_it
     m, n = size(data)
     J = getJ(n, k, ρ)
     @assert J * k ≤ n
@@ -91,7 +94,7 @@ function init_centroids(S::PNNS{S0}, data::Mat64, k::Int, A::Type{<:Accelerator}
     @bthreads for a = 1:J
         rdata = KMMatrix(data.dmat[:,split .== a])
         config = inner_init(S, rdata, k, A)
-        lloyd!(config, rdata, 1_000, 0.0, false)
+        lloyd!(config, rdata, max_it, 0.0, false)
         configs[a] = config
     end
 
