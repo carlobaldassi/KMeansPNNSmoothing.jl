@@ -264,7 +264,9 @@ function update!(ann::SimplerAnnuli, dist::AbstractVector{Float64})
     @inbounds for f = G-1:-1:1
         i = 2^(f+1)-2
         sz = min(i + 2^(f+1), k)
-        es[f], x = partialsort!(@view(sdist[1:sz]), i)
+        # es[f], x = partialsort!(@view(sdist[1:sz]), i) # partialsort! uses ScratchQuickSort after julia 1.9 which allocates and is too slow
+        sort!(@view(sdist[1:sz]); alg=PartialQuickSort(i))
+        es[f], x = sdist[i]
     end
     @inbounds for j = 1:k
         pperm[j] = sdist[j][2]
