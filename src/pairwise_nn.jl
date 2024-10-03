@@ -49,7 +49,7 @@ function _get_nns(vs, j, k, centroids, csizes)
     (nt == 1 || k < 500) && return _get_nns(j, k, centroids, csizes)
     z = csizes[j]
     fill!(vs, (Inf, 0))
-    Threads.@threads for j′ = 1:k
+    Threads.@threads :static for j′ = 1:k
         j′ == j && continue
         @inbounds begin
             z′ = csizes[j′]
@@ -88,7 +88,7 @@ function _update_nns!(vs, nns_costs, nns, j, k, centroids, csizes)
     (nt == 1 || k < 500) && return _update_nns!(nns_costs, nns, j, k, centroids, csizes)
     z = csizes[j]
     fill!(vs, (Inf, 0))
-    Threads.@threads for j′ = 1:k
+    Threads.@threads :static for j′ = 1:k
         j′ == j && continue
         @inbounds begin
             z′ = csizes[j′]

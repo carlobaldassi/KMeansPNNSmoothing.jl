@@ -85,8 +85,8 @@ function partition_from_centroids_from_scratch!(config::Configuration{Exponion},
             _costs_1_vs_all!(costsij, data, i, centroids)
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
-            ub[i] = √̂(v1)
-            lb[i] = √̂(v2)
+            ub[i] = ✓(v1)
+            lb[i] = ✓(v2)
         end
     end
     num_chgd = n
@@ -118,7 +118,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
             datai = @view data[:,i]
             v = _cost(datai, @view centroids[:,ci])
             costs[i] = v
-            ub[i] = √̂(v)
+            ub[i] = ✓(v)
             lbr > ub[i] && continue
 
             ri = 2 * (ubi + hs)
@@ -151,7 +151,7 @@ function partition_from_centroids!(config::Configuration{Exponion}, data::Mat64,
                 end
             end
             costs[i], c[i], = v1, x1
-            ub[i], lb[i] = √̂(v1), √̂(v2)
+            ub[i], lb[i] = ✓(v1), ✓(v2)
         end
     end
     cost = sum(costs)
@@ -203,7 +203,7 @@ function centroids_from_partition!(config::Configuration{Exponion}, data::Mat64,
             #     cd = cdist[j, j′]
             #     cdist[j′,j] = cd
             else
-                @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+                @views cd = ✓(_cost(centroids[:,j′], centroids[:,j]))
                 cdj[j′] = cd
             end
             if cd < s[j]

@@ -97,7 +97,7 @@ function partition_from_centroids!(config::Configuration{Ball}, data::Mat64, w::
             length(nci) == 0 && continue
             # @views v = _cost(data[:,i], centroids[:,ci])
             v = costs[i] # was set when computing r
-            d = √̂(v)
+            d = ✓(v)
             # @assert d ≤ r[ci]
             if !did_sort[ci]
                 @lock lk2 begin
@@ -158,10 +158,10 @@ function centroids_from_partition!(config::Configuration{Ball}, data::Mat64, w::
     @inbounds @bthreads for i = 1:n
         j = c[i]
         stable[j] && continue
-        # r[j] = max(r[j], @views 2 * √̂(_cost(centroids[:,j], data[:,i])))
+        # r[j] = max(r[j], @views 2 * ✓(_cost(centroids[:,j], data[:,i])))
         v = @views _cost(centroids[:,j], data[:,i])
         costs[i] = v
-        sv = 2 * √̂(v)
+        sv = 2 * ✓(v)
         if sv > r[j]
             @lock lk begin
                 r[j] = sv
@@ -176,7 +176,7 @@ function centroids_from_partition!(config::Configuration{Ball}, data::Mat64, w::
         if cd ≥ rj + δ + δ′
             cdist[j′, j] = cd - δ - δ′
         else
-            @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+            @views cd = ✓(_cost(centroids[:,j′], centroids[:,j]))
             cdist[j′, j] = cd
         end
     end

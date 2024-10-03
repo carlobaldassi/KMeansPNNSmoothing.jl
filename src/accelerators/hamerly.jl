@@ -65,8 +65,8 @@ function partition_from_centroids_from_scratch!(config::Configuration{Hamerly}, 
             _costs_1_vs_all!(costsij, data, i, centroids)
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
-            ub[i] = √̂(v1)
-            lb[i] = √̂(v2)
+            ub[i] = ✓(v1)
+            lb[i] = ✓(v2)
         end
     end
     num_chgd = n
@@ -99,7 +99,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
             lbr > ubi && continue
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √̂(v)
+            ub[i] = ✓(v)
             lbr > ub[i] && continue
 
             costsij = costsij_th[Threads.threadid()]
@@ -115,7 +115,7 @@ function partition_from_centroids!(config::Configuration{Hamerly}, data::Mat64, 
                 end
             end
             costs[i], c[i] = v1, x1
-            ub[i], lb[i] = √̂(v1), √̂(v2)
+            ub[i], lb[i] = ✓(v1), ✓(v2)
         end
     end
     cost = sum(costs)
@@ -159,7 +159,7 @@ function centroids_from_partition!(config::Configuration{Hamerly}, data::Mat64, 
         s[j] = Inf
         for j′ = 1:k
             j′ == j && continue
-            @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+            @views cd = ✓(_cost(centroids[:,j′], centroids[:,j]))
             if cd < s[j]
                 s[j] = cd
             end
@@ -231,7 +231,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SHam}, dat
             _costs_1_vs_all!(costsij, data, i, centroids)
             v1, v2, x1 = findmin_and_2ndmin(costsij)
             costs[i], c[i] = v1, x1
-            lb[i] = √̂(v2)
+            lb[i] = ✓(v2)
         end
     end
     num_chgd = n
@@ -262,7 +262,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
             lbi = lb[i]
             hs = s[ci] / 2
             lbr = ifelse(lbi > hs, lbi, hs) # max(lbi, hs) # max accounts for NaN and signed zeros...
-            lbr > √̂(v) && continue
+            lbr > ✓(v) && continue
 
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
@@ -278,7 +278,7 @@ function partition_from_centroids!(config::Configuration{SHam}, data::Mat64, w::
                 end
             end
             costs[i], c[i] = v1, x1
-            lb[i] = √̂(v2)
+            lb[i] = ✓(v2)
         end
     end
     cost = sum(costs)
@@ -319,7 +319,7 @@ function centroids_from_partition!(config::Configuration{SHam}, data::Mat64, w::
         s[j] = Inf
         for j′ = 1:k
             j′ == j && continue
-            @views cd = √̂(_cost(centroids[:,j′], centroids[:,j]))
+            @views cd = ✓(_cost(centroids[:,j′], centroids[:,j]))
             if cd < s[j]
                 s[j] = cd
             end

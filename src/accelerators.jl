@@ -6,7 +6,7 @@ function _complete_initialization_ub!(config::Configuration, data::Mat64)
     @extract accel: ub
 
     @inbounds @simd for i = 1:n
-        ub[i] = √̂(costs[i])
+        ub[i] = ✓(costs[i])
     end
 
     return config
@@ -31,7 +31,7 @@ function _sync_costs_ub!(config::Configuration, data::Mat64, w::Union{Vector{<:R
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √̂(v)
+            ub[i] = ✓(v)
         end
     end
     config.cost = sum(costs)

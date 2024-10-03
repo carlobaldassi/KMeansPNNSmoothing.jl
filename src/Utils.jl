@@ -5,7 +5,7 @@ using ExtractMacro
 using ..Cache
 
 export KMMatrix, Mat64, update_quads!,
-       Θ, √̂,
+       Θ, ✓,
        @bthreads,
        _cost, _costs_1_vs_all!, _costs_1_vs_range!, _cost_1_vs_1,
        compute_costs_one!, compute_costs_one, update_costs_one!,
@@ -25,7 +25,7 @@ macro bthreads(ex)
             old_num_thr = BLAS.get_num_threads()
             old_num_thr ≠ 1 && BLAS.set_num_threads(1)
             try
-                Threads.@threads $ex
+                Threads.@threads :static $ex
             finally
                 old_num_thr ≠ 1 && BLAS.set_num_threads(old_num_thr)
             end
@@ -101,7 +101,7 @@ const Mat64 = KMMatrix{Float64}
 ## due to floating point approx, we may end up with tiny negative cost values
 ## we use this rectified square root for that
 Θ(x) = ifelse(x > 0, x, 0.0)
-√̂(x) = √Θ(x)
+✓(x) = √Θ(x)
 
 
 
@@ -302,7 +302,7 @@ function _update_centroids_δc!(centroids, new_centroids, δc, csizes, stable)
         centrj = @view centroids[:,j]
         ncentrj = @view new_centroids[:,j]
         ncentrj ./= z
-        δc[j] = √̂(_cost(centrj, ncentrj))
+        δc[j] = ✓(_cost(centrj, ncentrj))
         centrj[:] = ncentrj
     end
     update_quads!(centroids)

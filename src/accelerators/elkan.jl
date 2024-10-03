@@ -58,7 +58,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{SElk}, dat
             _costs_1_vs_all!(costsij, data, i, centroids)
             v, x = findmin(costsij)
             costs[i], c[i] = v, x
-            lb[:,i] .= .√̂(costsij)
+            lb[:,i] .= ✓.(costsij)
             ub[i] = lb[x,i]
         end
     end
@@ -96,14 +96,14 @@ function partition_from_centroids!(config::Configuration{SElk}, data::Mat64, w::
             datai = @view data[:,i]
             @views v = _cost(datai, centroids[:,ci])
             x = ci
-            sv = √̂(v)
+            sv = ✓(v)
             ubi = sv
             lbi[ci] = sv
 
             for j in 1:k
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(datai, centroids[:,j])
-                sv′ = √̂(v′)
+                sv′ = ✓(v′)
                 lbi[j] = sv′
                 if v′ < v
                     v, x = v′, j
@@ -140,8 +140,8 @@ function sync_costs!(config::Configuration{SElk}, data::Mat64, w::Union{Vector{<
             ci = c[i]
             @views v = _cost(data[:,i], centroids[:,ci])
             costs[i] = v
-            ub[i] = √̂(v)
-            lb[ci,i] = √̂(v)
+            ub[i] = ✓(v)
+            lb[ci,i] = ✓(v)
         end
     end
     config.cost = sum(costs)
@@ -233,7 +233,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{RElk}, dat
             costsij = costsij_th[Threads.threadid()]
             _costs_1_vs_all!(costsij, data, i, centroids)
             costs[i], c[i] = findmin(costsij)
-            lb[:,i] .= .√̂(costsij)
+            lb[:,i] .= ✓.(costsij)
         end
     end
     num_chgd = n
@@ -274,7 +274,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
                 fullsearch = false
             end
             lbi = @view lb[:,i]
-            ubi = √̂(v)
+            ubi = ✓(v)
             if active[ci]
                 lbi[ci] = ubi
             end
@@ -285,7 +285,7 @@ function partition_from_centroids!(config::Configuration{RElk}, data::Mat64, w::
             for j in inds
                 (lbi[j] > ubi || j == ci) && continue
                 @views v′ = _cost(datai, centroids[:,j])
-                sv′ = √̂(v′)
+                sv′ = ✓(v′)
                 lbi[j] = sv′
                 if v′ < v
                     v, x = v′, j

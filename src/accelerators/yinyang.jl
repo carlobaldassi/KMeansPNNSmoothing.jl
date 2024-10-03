@@ -111,7 +111,7 @@ function complete_initialization!(config::Configuration{Yinyang}, data::Mat64)
     @extract accel: ub groups gind
 
     @inbounds @simd for i = 1:n
-        ub[i] = √̂(costs[i])
+        ub[i] = ✓(costs[i])
     end
     @inbounds for i = 1:n
         ci = c[i]
@@ -141,7 +141,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
             _costs_1_vs_all!(costsij, data, i, centroids)
             v, x = findmin(costsij)
             costs[i], c[i] = v, x
-            ub[i] = √̂(v)
+            ub[i] = ✓(v)
             for (f,gr) in enumerate(groups)
                 if last(gr) ≥ x
                     gind[i] = f
@@ -155,7 +155,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Yinyang}, 
                     j == x && continue
                     v′ = min(v′, costsij[j])
                 end
-                lbi[f] = √̂(v′)
+                lbi[f] = ✓(v′)
             end
         end
     end
@@ -197,7 +197,7 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
             fi = gind[i]
 
             @views v = _cost(data[:,i], centroids[:,ci])
-            sv = √̂(v)
+            sv = ✓(v)
             ubi = sv
             x = ci
             for (f,gr) in enumerate(groups)
@@ -218,17 +218,17 @@ function partition_from_centroids!(config::Configuration{Yinyang}, data::Mat64, 
                 end
                 if v1 < v
                     @assert x1 ≠ x
-                    lbi[f] = √̂(v2)
+                    lbi[f] = ✓(v2)
                     if f ≠ fi
                         lbi[fi] = min(lbi[fi], ubi)
                         fi = f
                     else
-                        lbi[f] = min(lbi[f], √̂(v))
+                        lbi[f] = min(lbi[f], ✓(v))
                     end
                     v, x = v1, x1
-                    ubi = √̂(v)
+                    ubi = ✓(v)
                 else
-                    lbi[f] = √̂(v1)
+                    lbi[f] = ✓(v1)
                 end
             end
             if x ≠ ci
@@ -420,7 +420,7 @@ function partition_from_centroids_from_scratch!(config::Configuration{Ryy}, data
                     j == x && continue
                     v′ = min(v′, costsij[j])
                 end
-                lbi[f] = √̂(v′)
+                lbi[f] = ✓(v′)
             end
         end
     end
@@ -464,7 +464,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                 v = costs[i]
                 fullsearch = false
             end
-            sv = √̂(v)
+            sv = ✓(v)
             lbi = @view lb[:,i]
             skip = true
             for lbif in lbi
@@ -493,7 +493,7 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                 end
                 if v1 < v
                     @assert x1 ≠ x
-                    lbi[f] = √̂(v2)
+                    lbi[f] = ✓(v2)
                     if f ≠ fi
                         lbi[fi] = min(lbi[fi], sv)
                         fi = f
@@ -501,9 +501,9 @@ function partition_from_centroids!(config::Configuration{Ryy}, data::Mat64, w::U
                         lbi[f] = min(lbi[f], sv)
                     end
                     v, x = v1, x1
-                    sv = √̂(v)
+                    sv = ✓(v)
                 else
-                    lbi[f] = √̂(v1)
+                    lbi[f] = ✓(v1)
                 end
             end
             if x ≠ ci
