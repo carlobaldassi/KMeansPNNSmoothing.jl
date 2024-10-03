@@ -1,9 +1,8 @@
 # KMeansPNNSmoothing.jl
 
 This code implements the PNN-smoothing seeding method for k-means described in the paper
-*"Systematically and efficiently improving existing k-means initialization algorithms
-by pairwise-nearest-neighbor smoothing"* by C. Baldassi,
-submitted for publication, (2022) [arXiv][pnns_paper].
+*"Systematically and efficiently improving k-means initialization
+by pairwise-nearest-neighbor smoothing"* by C. Baldassi, TMLR, (2022) [TMLR][tmlr_paper], [arXiv][pnns_paper].
 
 The code is written in [Julia]. It requires Julia 1.6 or later.
 
@@ -103,6 +102,7 @@ The code has originated from the code of [RecombinatorKMeans.jl][reckmeans_repo]
 licence information there.
 
 [pnns_paper]: https://arxiv.org/abs/2202.03949
+[tmlr_paper]: https://openreview.net/pdf?id=FTtFAg3pek
 [Julia]: https://julialang.org
 [km++]: https://scholar.google.com/scholar?cluster=16794944444927209316
 [sklearnkmeans]: https://github.com/scikit-learn/scikit-learn/blob/master/sklearn/cluster/_kmeans.py
